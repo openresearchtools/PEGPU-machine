@@ -49,3 +49,17 @@ Each release is expected to include:
 - `vEGPU-Machine-<version>-source.tar.gz`: the corresponding source archive, including the patch stack, source records, and source materials used for bundled runtime components.
 
 Release notices are included with the app and identify the bundled runtime components and collected license texts for the release payload.
+
+## Headless Driver Requests
+
+The built `vEGPU Machine.app` can submit macOS DriverKit requests without
+opening the normal setup window:
+
+```sh
+"/Applications/vEGPU Machine.app/Contents/MacOS/vEGPU Machine" --driver-activate
+"/Applications/vEGPU Machine.app/Contents/MacOS/vEGPU Machine" --driver-deactivate
+```
+
+macOS may still require user approval in System Settings or a reboot. These
+commands only avoid showing the app's own setup UI; they do not bypass Apple's
+system-extension approval flow.

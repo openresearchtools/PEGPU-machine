@@ -1285,7 +1285,7 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..868ca19f16111b8a9ebe4f04a59ed531
  
  private struct ExtensionRow: View {
      @ObservedObject var activationManager: SystemExtensionActivationManager
-@@ -209,10 +210,21 @@ private struct ExtensionRow: View {
+@@ -209,12 +210,23 @@ private struct ExtensionRow: View {
      var body: some View {
          if activationManager.isExtensionKnownActive {
              ChecklistRow(
@@ -1304,6 +1304,7 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..868ca19f16111b8a9ebe4f04a59ed531
 -                Button("Uninstall Driver") { confirmAndDeactivate() }
 -                    .buttonStyle(.bordered)
 -                    .controlSize(.small)
+-                    .disabled(activationManager.requestInFlight)
 +                VStack(alignment: .trailing, spacing: 8) {
 +                    Button("Uninstall Driver") { confirmAndDeactivate() }
 +                        .buttonStyle(.bordered)
@@ -1312,8 +1313,9 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..868ca19f16111b8a9ebe4f04a59ed531
 +                        .buttonStyle(.bordered)
 +                        .controlSize(.small)
 +                }
-@@ -220,8 +232,8 @@ private struct ExtensionRow: View {
++                .disabled(activationManager.requestInFlight)
              }
+@@ -221,7 +233,7 @@ private struct ExtensionRow: View {
          } else if activationManager.isExtensionWaitingForApproval {
              ChecklistRow(
 -                title: "Approve system extension",
@@ -2098,20 +2100,197 @@ index 2404a50e282ed3872161918c4c4f5f964ba06fc1..c8abe28a0cddb3aca365335bdedc4d78
      }
  }
 diff --git a/contrib/apple-vfio/VFIOUserHostApp/VFIOUserHostAppApp.swift b/contrib/apple-vfio/VFIOUserHostApp/VFIOUserHostAppApp.swift
-index a39c5f68952a04677d4837d2ec9fac6aac3253b5..4db6ef39924d881130405128c2fe04bafb330596 100644
+index a39c5f68952a04677d4837d2ec9fac6aac3253b5..63179c8298660573e439c3f33efc2843e934e09b 100644
 --- a/contrib/apple-vfio/VFIOUserHostApp/VFIOUserHostAppApp.swift
 +++ b/contrib/apple-vfio/VFIOUserHostApp/VFIOUserHostAppApp.swift
-@@ -1,3 +1,6 @@
+@@ -1,32 +1,177 @@
 +// Modified by OpenResearchTools, 2026-05-26.
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +
- //
- //  VFIOUserHostAppApp.swift
- //  VFIOUserHostApp
-@@ -28,5 +31,23 @@ struct VFIOUserHostAppApp: App {
-             ContentView()
-         }
-         .windowResizability(.contentSize)
+-//
+-//  VFIOUserHostAppApp.swift
+-//  VFIOUserHostApp
+-//
+-//  Setup-only host app for the VFIOUserPCIDriver dext. Real device interaction
+-//  happens out-of-process via qemu (bundled at Contents/MacOS/qemu-system-aarch64
+-//  by the "Embed QEMU" build phase).
+-//
+-
+-import AppKit
+-import SwiftUI
+-
+-/// Drives the at-launch "move to /Applications" prompt before the SwiftUI
+-/// window appears. Lives in the app delegate (rather than `App.init`) so we
+-/// have a real `NSApplication` available for `NSAlert.runModal()`.
+-final class AppDelegate: NSObject, NSApplicationDelegate {
+-    func applicationWillFinishLaunching(_ notification: Notification) {
+-        MoveToApplications.runIfNeeded()
+-    }
+-}
+-
+-@main
+-struct VFIOUserHostAppApp: App {
+-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+-
+-    var body: some Scene {
+-        WindowGroup {
+-            ContentView()
+-        }
+-        .windowResizability(.contentSize)
++//
++//  VFIOUserHostAppApp.swift
++//  VFIOUserHostApp
++//
++//  Setup-only host app for the VFIOUserPCIDriver dext. Real device interaction
++//  happens out-of-process via qemu (bundled at Contents/MacOS/qemu-system-aarch64
++//  by the "Embed QEMU" build phase).
++//
++
++import AppKit
++import Darwin
++import SwiftUI
++import SystemExtensions
++
++private enum HeadlessDriverCommand {
++    case activate
++    case deactivate
++
++    static let current: HeadlessDriverCommand? = {
++        CommandLine.arguments.dropFirst().compactMap { Self.parse($0) }.first
++    }()
++
++    private static func parse(_ argument: String) -> HeadlessDriverCommand? {
++        switch argument {
++        case "--driver-activate", "driver-activate", "activate-driver":
++            return .activate
++        case "--driver-deactivate", "driver-deactivate", "deactivate-driver":
++            return .deactivate
++        default:
++            return nil
++        }
++    }
++
++    var requestName: String {
++        switch self {
++        case .activate: return "activation"
++        case .deactivate: return "deactivation"
++        }
++    }
++}
++
++/// Drives the at-launch "move to /Applications" prompt before the SwiftUI
++/// window appears. Lives in the app delegate (rather than `App.init`) so we
++/// have a real `NSApplication` available for `NSAlert.runModal()`.
++final class AppDelegate: NSObject, NSApplicationDelegate {
++    private var headlessRunner: HeadlessDriverCommandRunner?
++
++    func applicationWillFinishLaunching(_ notification: Notification) {
++        guard HeadlessDriverCommand.current == nil else {
++            NSApp.setActivationPolicy(.prohibited)
++            return
++        }
++        MoveToApplications.runIfNeeded()
++    }
++
++    func applicationDidFinishLaunching(_ notification: Notification) {
++        guard let command = HeadlessDriverCommand.current else {
++            return
++        }
++        NSApp.setActivationPolicy(.prohibited)
++        NSApp.windows.forEach { $0.orderOut(nil) }
++        let runner = HeadlessDriverCommandRunner(command: command)
++        headlessRunner = runner
++        runner.run()
++    }
++}
++
++private final class HeadlessDriverCommandRunner: NSObject, OSSystemExtensionRequestDelegate {
++    private let command: HeadlessDriverCommand
++    private let extensionIdentifier: String
++
++    init(command: HeadlessDriverCommand) {
++        self.command = command
++        self.extensionIdentifier = Bundle.main.bundleIdentifier! + ".VFIOUserPCIDriver"
++        super.init()
++    }
++
++    func run() {
++        let request: OSSystemExtensionRequest
++        switch command {
++        case .activate:
++            request = OSSystemExtensionRequest.activationRequest(
++                forExtensionWithIdentifier: extensionIdentifier,
++                queue: .main
++            )
++        case .deactivate:
++            request = OSSystemExtensionRequest.deactivationRequest(
++                forExtensionWithIdentifier: extensionIdentifier,
++                queue: .main
++            )
++        }
++        request.delegate = self
++        printLine("Submitting macOS driver \(command.requestName) request for \(extensionIdentifier)...")
++        OSSystemExtensionManager.shared.submitRequest(request)
++    }
++
++    func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
++        finish(
++            "vEGPU Machine submitted the macOS driver \(command.requestName) request. Approve it in System Settings > General > Login Items & Extensions > Driver Extensions.",
++            code: 0
++        )
++    }
++
++    func request(
++        _ request: OSSystemExtensionRequest,
++        actionForReplacingExtension existing: OSSystemExtensionProperties,
++        withExtension ext: OSSystemExtensionProperties
++    ) -> OSSystemExtensionRequest.ReplacementAction {
++        printLine("Replacing existing macOS driver with the bundled version.")
++        return .replace
++    }
++
++    func request(
++        _ request: OSSystemExtensionRequest,
++        didFinishWithResult result: OSSystemExtensionRequest.Result
++    ) {
++        finish("vEGPU Machine macOS driver \(command.requestName) request completed: \(String(describing: result)).", code: 0)
++    }
++
++    func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
++        finish("vEGPU Machine macOS driver \(command.requestName) request failed: \(error.localizedDescription)", code: 1)
++    }
++
++    private func printLine(_ message: String) {
++        fputs(message + "\n", stdout)
++        fflush(stdout)
++    }
++
++    private func finish(_ message: String, code: Int32) -> Never {
++        let stream = code == 0 ? stdout : stderr
++        fputs(message + "\n", stream)
++        fflush(stream)
++        exit(code)
++    }
++}
++
++@main
++struct VFIOUserHostAppApp: App {
++    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
++
++    var body: some Scene {
++        WindowGroup {
++            if HeadlessDriverCommand.current == nil {
++                ContentView()
++            } else {
++                EmptyView()
++                    .frame(width: 0, height: 0)
++                    .onAppear {
++                        NSApp.setActivationPolicy(.prohibited)
++                        NSApp.windows.forEach { $0.orderOut(nil) }
++                    }
++            }
++        }
++        .windowResizability(.contentSize)
 +        .commands {
 +            CommandGroup(replacing: .appInfo) {
 +                Button("About vEGPU Machine") {
