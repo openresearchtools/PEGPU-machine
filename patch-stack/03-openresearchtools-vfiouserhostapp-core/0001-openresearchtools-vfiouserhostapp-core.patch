@@ -1045,7 +1045,7 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..868ca19f16111b8a9ebe4f04a59ed531
          }
          .padding(20)
 -        .frame(minWidth: 540, idealWidth: 580, minHeight: 360, idealHeight: 400)
-+        .frame(minWidth: 620, idealWidth: 660, minHeight: 420, idealHeight: 460)
++        .frame(minWidth: 620, idealWidth: 660, minHeight: 480, idealHeight: 520)
          .onAppear {
              refreshState()
              startPolling()
@@ -1285,18 +1285,34 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..868ca19f16111b8a9ebe4f04a59ed531
  
  private struct ExtensionRow: View {
      @ObservedObject var activationManager: SystemExtensionActivationManager
-@@ -209,8 +210,8 @@ private struct ExtensionRow: View {
+@@ -209,10 +210,21 @@ private struct ExtensionRow: View {
      var body: some View {
          if activationManager.isExtensionKnownActive {
              ChecklistRow(
 -                title: "System extension active",
 -                detail: activationManager.extensionIdentifier,
 +                title: "macOS driver ready",
-+                detail: "Ready for vEGPU virtual machines.",
++                detail: """
++                Ready for vEGPU virtual machines.
++
++                If this driver was installed by an older vEGPU Machine app that \
++                was replaced, Force Uninstall runs `systemextensionsctl uninstall \
++                - \(activationManager.extensionIdentifier)` to remove the leftover dext.
++                """,
                  state: .ok
              ) {
-                 Button("Uninstall Driver") { confirmAndDeactivate() }
-@@ -220,8 +221,8 @@ private struct ExtensionRow: View {
+-                Button("Uninstall Driver") { confirmAndDeactivate() }
+-                    .buttonStyle(.bordered)
+-                    .controlSize(.small)
++                VStack(alignment: .trailing, spacing: 8) {
++                    Button("Uninstall Driver") { confirmAndDeactivate() }
++                        .buttonStyle(.bordered)
++                        .controlSize(.small)
++                    Button("Force Uninstall") { confirmAndForceUninstall() }
++                        .buttonStyle(.bordered)
++                        .controlSize(.small)
++                }
+@@ -220,8 +232,8 @@ private struct ExtensionRow: View {
              }
          } else if activationManager.isExtensionWaitingForApproval {
              ChecklistRow(
@@ -1307,7 +1323,7 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..868ca19f16111b8a9ebe4f04a59ed531
                  state: .needsAction
              ) {
                  Button("Open Settings") { openSystemSettingsExtensions() }
-@@ -242,8 +243,8 @@ private struct ExtensionRow: View {
+@@ -242,8 +254,8 @@ private struct ExtensionRow: View {
              )
          } else {
              ChecklistRow(
@@ -1318,7 +1334,7 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..868ca19f16111b8a9ebe4f04a59ed531
                  state: .needsAction
              ) {
                  HStack(spacing: 8) {
-@@ -265,11 +266,10 @@ private struct ExtensionRow: View {
+@@ -265,11 +277,10 @@ private struct ExtensionRow: View {
  
      private func confirmAndDeactivate() {
          let alert = NSAlert()
@@ -1333,9 +1349,68 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..868ca19f16111b8a9ebe4f04a59ed531
              """
          alert.alertStyle = .warning
          alert.addButton(withTitle: "Uninstall")
-@@ -280,78 +280,6 @@ private struct ExtensionRow: View {
+@@ -280,78 +291,65 @@ private struct ExtensionRow: View {
      }
++
++    private func confirmAndForceUninstall() {
++        let alert = NSAlert()
++        alert.messageText = "Force uninstall the macOS driver?"
++        alert.informativeText = """
++            Use this only if a driver from an older vEGPU Machine app remains \
++            installed after replacing the app. This runs:
++
++            systemextensionsctl uninstall - \(activationManager.extensionIdentifier)
++
++            macOS may require a reboot to finish removing it.
++            """
++        alert.alertStyle = .warning
++        alert.addButton(withTitle: "Force Uninstall")
++        alert.addButton(withTitle: "Cancel")
++        guard alert.runModal() == .alertFirstButtonReturn else { return }
++        runForceUninstall()
++    }
++
++    private func runForceUninstall() {
++        let identifier = activationManager.extensionIdentifier
++        activationManager.showStatus("Running forced macOS driver uninstall...")
++        Task {
++            let result = await Task.detached {
++                forceUninstallDriverExtension(identifier)
++            }.value
++            activationManager.showStatus(result)
++            activationManager.refreshExtensionActiveState()
++        }
++    }
  }
++
++private func forceUninstallDriverExtension(_ identifier: String) -> String {
++    let process = Process()
++    let output = Pipe()
++    process.executableURL = URL(fileURLWithPath: "/usr/bin/systemextensionsctl")
++    process.arguments = ["uninstall", "-", identifier]
++    process.standardOutput = output
++    process.standardError = output
++
++    do {
++        try process.run()
++        process.waitUntilExit()
++    } catch {
++        return "Force uninstall failed: \(error.localizedDescription)"
++    }
++
++    let data = output.fileHandleForReading.readDataToEndOfFile()
++    let message = String(data: data, encoding: .utf8)?
++        .trimmingCharacters(in: .whitespacesAndNewlines)
++        ?? ""
++    if process.terminationStatus == 0 {
++        return message.isEmpty
++            ? "Forced macOS driver uninstall completed. Reboot if macOS still shows the driver."
++            : message
++    }
++    return message.isEmpty
++        ? "Force uninstall failed with status \(process.terminationStatus)."
++        : "Force uninstall failed with status \(process.terminationStatus): \(message)"
++}
  
 -// MARK: - Row: CLI tools
 -
