@@ -1,0 +1,1628 @@
+diff --git a/hw/display/virtio-gpu-virgl.c b/hw/display/virtio-gpu-virgl.c
+index add85bd4e61229b9f0ac4e346b7f99aa992adcd8..2b745b1f2bd724009f91b78d8b7b5c4f65aa514b 100644
+--- a/hw/display/virtio-gpu-virgl.c
++++ b/hw/display/virtio-gpu-virgl.c
+@@ -11,6 +11,11 @@
+  * See the COPYING file in the top-level directory.
+  */
+ 
++/*
++ * Modified by OpenResearchTools, 2026-05-26.
++ * This file contains OpenResearchTools modifications for the macOS SPICE/virgl display runtime.
++ */
++
+ #include "qemu/osdep.h"
+ #include "qemu/error-report.h"
+ #include "qemu/iov.h"
+@@ -63,7 +68,7 @@ virtio_gpu_virgl_find_resource(VirtIOGPU *g, uint32_t resource_id)
+     return container_of(res, struct virtio_gpu_virgl_resource, base);
+ }
+ 
+-#if VIRGL_RENDERER_CALLBACKS_VERSION >= 4
++#if defined(CONFIG_EGL) && VIRGL_RENDERER_CALLBACKS_VERSION >= 4
+ static void *
+ virgl_get_egl_display(G_GNUC_UNUSED void *cookie)
+ {
+@@ -542,11 +547,51 @@ static void virgl_cmd_resource_flush(VirtIOGPU *g,
+     }
+ }
+ 
++static uint32_t virgl_borrow_texture_for_scanout(uint32_t id, bool *y_0_top,
++                                                 uint32_t *width,
++                                                 uint32_t *height,
++                                                 void **d3d_tex2d)
++{
++    struct virgl_renderer_resource_info info;
++    int ret;
++
++#if VIRGL_VERSION_MAJOR >= 1
++    struct virgl_renderer_resource_info_ext ext;
++    memset(&ext, 0, sizeof(ext));
++    ret = virgl_renderer_resource_get_info_ext(id, &ext);
++    info = ext.base;
++    if (d3d_tex2d) {
++        *d3d_tex2d = ext.d3d_tex2d;
++    }
++#else
++    memset(&info, 0, sizeof(info));
++    ret = virgl_renderer_resource_get_info(id, &info);
++    if (d3d_tex2d) {
++        *d3d_tex2d = NULL;
++    }
++#endif
++    if (ret) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "%s: illegal resource specified %d\n",
++                      __func__, id);
++        return 0;
++    }
++    if (y_0_top) {
++        *y_0_top = info.flags & VIRTIO_GPU_RESOURCE_FLAG_Y_0_TOP;
++    }
++    if (width) {
++        *width = info.width;
++    }
++    if (height) {
++        *height = info.height;
++    }
++    return info.tex_id;
++}
++
+ static void virgl_cmd_set_scanout(VirtIOGPU *g,
+                                   struct virtio_gpu_ctrl_command *cmd)
+ {
+     struct virtio_gpu_set_scanout ss;
+-    int ret;
+ 
+     VIRTIO_GPU_FILL_CMD(ss);
+     trace_virtio_gpu_cmd_set_scanout(ss.scanout_id, ss.resource_id,
+@@ -561,35 +606,13 @@ static void virgl_cmd_set_scanout(VirtIOGPU *g,
+     g->parent_obj.enable = 1;
+ 
+     if (ss.resource_id && ss.r.width && ss.r.height) {
+-        struct virgl_renderer_resource_info info;
+-        void *d3d_tex2d = NULL;
+-
+-#if VIRGL_VERSION_MAJOR >= 1
+-        struct virgl_renderer_resource_info_ext ext;
+-        memset(&ext, 0, sizeof(ext));
+-        ret = virgl_renderer_resource_get_info_ext(ss.resource_id, &ext);
+-        info = ext.base;
+-        d3d_tex2d = ext.d3d_tex2d;
+-#else
+-        memset(&info, 0, sizeof(info));
+-        ret = virgl_renderer_resource_get_info(ss.resource_id, &info);
+-#endif
+-        if (ret) {
+-            qemu_log_mask(LOG_GUEST_ERROR,
+-                          "%s: illegal resource specified %d\n",
+-                          __func__, ss.resource_id);
+-            cmd->error = VIRTIO_GPU_RESP_ERR_INVALID_RESOURCE_ID;
+-            return;
+-        }
+         qemu_console_resize(g->parent_obj.scanout[ss.scanout_id].con,
+                             ss.r.width, ss.r.height);
+         virgl_renderer_force_ctx_0();
+-        dpy_gl_scanout_texture(
+-            g->parent_obj.scanout[ss.scanout_id].con, info.tex_id,
+-            info.flags & VIRTIO_GPU_RESOURCE_FLAG_Y_0_TOP,
+-            info.width, info.height,
+-            ss.r.x, ss.r.y, ss.r.width, ss.r.height,
+-            d3d_tex2d);
++        dpy_gl_scanout_texture_borrowed(
++            g->parent_obj.scanout[ss.scanout_id].con, ss.resource_id,
++            virgl_borrow_texture_for_scanout,
++            ss.r.x, ss.r.y, ss.r.width, ss.r.height);
+     } else {
+         dpy_gfx_replace_surface(
+             g->parent_obj.scanout[ss.scanout_id].con, NULL);
+@@ -1433,7 +1456,7 @@ static int virtio_gpu_virgl_init(VirtIOGPU *g)
+     uint32_t flags = 0;
+     VirtIOGPUGL *gl = VIRTIO_GPU_GL(g);
+ 
+-#if VIRGL_RENDERER_CALLBACKS_VERSION >= 4
++#if defined(CONFIG_EGL) && VIRGL_RENDERER_CALLBACKS_VERSION >= 4
+     if (qemu_egl_display) {
+         virtio_gpu_3d_cbs.version = 4;
+         virtio_gpu_3d_cbs.get_egl_display = virgl_get_egl_display;
+@@ -1446,10 +1469,12 @@ static int virtio_gpu_virgl_init(VirtIOGPU *g)
+     }
+ #endif
+ #ifdef VIRGL_RENDERER_D3D11_SHARE_TEXTURE
++#ifdef CONFIG_EGL
+     if (qemu_egl_angle_d3d) {
+         flags |= VIRGL_RENDERER_D3D11_SHARE_TEXTURE;
+     }
+ #endif
++#endif
+ #if VIRGL_VERSION_MAJOR >= 1
+     if (virtio_gpu_venus_enabled(g->parent_obj.conf)) {
+         flags |= VIRGL_RENDERER_VENUS | VIRGL_RENDERER_RENDER_SERVER;
+diff --git a/hw/display/virtio-gpu.c b/hw/display/virtio-gpu.c
+index dbb72bbb22ddcc0aec335d23bc9dac4c27e500f7..0dbc7a3dbb8a878dfc0523c7525c5be8e2e7eec3 100644
+--- a/hw/display/virtio-gpu.c
++++ b/hw/display/virtio-gpu.c
+@@ -11,6 +11,11 @@
+  * See the COPYING file in the top-level directory.
+  */
+ 
++/*
++ * Modified by OpenResearchTools, 2026-05-26.
++ * This file contains OpenResearchTools modifications for the macOS SPICE/virgl display runtime.
++ */
++
+ #include "qemu/osdep.h"
+ #include "qemu/units.h"
+ #include "qemu/iov.h"
+diff --git a/include/ui/console.h b/include/ui/console.h
+index 27eacc39cc060e7e564117558d84d075c22c480c..7992ab4792a94735e72bbc244a307b2210e67068 100644
+--- a/include/ui/console.h
++++ b/include/ui/console.h
+@@ -1,3 +1,8 @@
++/*
++ * Modified by OpenResearchTools, 2026-05-26.
++ * This file contains OpenResearchTools modifications for the macOS SPICE/virgl display runtime.
++ */
++
+ #ifndef CONSOLE_H
+ #define CONSOLE_H
+ 
+@@ -119,8 +124,14 @@ struct QemuConsoleClass {
+     char * (*get_label)(const QemuConsole *con);
+ };
+ 
++typedef uint32_t (*DisplayGLTextureBorrower)(uint32_t id, bool *y_0_top,
++                                             uint32_t *width,
++                                             uint32_t *height,
++                                             void **d3d_tex2d);
++
+ typedef struct ScanoutTexture {
+     uint32_t backing_id;
++    DisplayGLTextureBorrower backing_borrow;
+     bool backing_y_0_top;
+     uint32_t backing_width;
+     uint32_t backing_height;
+@@ -234,6 +245,12 @@ typedef struct DisplayChangeListenerOps {
+                                    uint32_t x, uint32_t y,
+                                    uint32_t w, uint32_t h,
+                                    void *d3d_tex2d);
++    /* optional if GL */
++    void (*dpy_gl_scanout_texture_borrowed)(DisplayChangeListener *dcl,
++                                            uint32_t backing_id,
++                                            DisplayGLTextureBorrower backing_borrow,
++                                            uint32_t x, uint32_t y,
++                                            uint32_t w, uint32_t h);
+     /* optional (default to true if has dpy_gl_scanout_dmabuf) */
+     bool (*dpy_has_dmabuf)(DisplayChangeListener *dcl);
+     /* optional */
+@@ -318,6 +335,10 @@ void dpy_gl_scanout_texture(QemuConsole *con,
+                             uint32_t backing_width, uint32_t backing_height,
+                             uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                             void *d3d_tex2d);
++void dpy_gl_scanout_texture_borrowed(QemuConsole *con,
++                            uint32_t backing_id,
++                            DisplayGLTextureBorrower backing_borrow,
++                            uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+ void dpy_gl_scanout_dmabuf(QemuConsole *con,
+                            QemuDmaBuf *dmabuf);
+ void dpy_gl_cursor_dmabuf(QemuConsole *con, QemuDmaBuf *dmabuf,
+diff --git a/include/ui/egl-helpers.h b/include/ui/egl-helpers.h
+index acf993fcf52f3e61170713ed32b5aa44fa9c97fc..6bbf4a23e1159c15943b7b5f30b7830364033e51 100644
+--- a/include/ui/egl-helpers.h
++++ b/include/ui/egl-helpers.h
+@@ -1,18 +1,47 @@
++/*
++ * Modified by OpenResearchTools, 2026-05-26.
++ * This file contains OpenResearchTools modifications for the macOS SPICE/virgl display runtime.
++ */
++
+ #ifndef EGL_HELPERS_H
+ #define EGL_HELPERS_H
+ 
+ #include <epoxy/gl.h>
++#ifdef CONFIG_EGL
+ #include <epoxy/egl.h>
++#endif
++#ifdef CONFIG_ANGLE
++#if defined(__has_include)
++#if __has_include(<EGL/eglext_angle.h>)
++#include <EGL/eglext_angle.h>
++#endif
++#endif
++#ifndef EGL_PLATFORM_ANGLE_ANGLE
++#define EGL_PLATFORM_ANGLE_ANGLE 0x3202
++#endif
++#ifndef EGL_IOSURFACE_ANGLE
++#define EGL_IOSURFACE_ANGLE 0x3454
++#define EGL_IOSURFACE_PLANE_ANGLE 0x345A
++#define EGL_TEXTURE_RECTANGLE_ANGLE 0x345B
++#define EGL_TEXTURE_TYPE_ANGLE 0x345C
++#define EGL_TEXTURE_INTERNAL_FORMAT_ANGLE 0x345D
++#define EGL_IOSURFACE_USAGE_HINT_ANGLE 0x348A
++#define EGL_IOSURFACE_WRITE_HINT_ANGLE 0x0002
++#define EGL_BIND_TO_TEXTURE_TARGET_ANGLE 0x348D
++#endif
++#endif
+ #ifdef CONFIG_GBM
+ #include <gbm.h>
+ #endif
+ #include "ui/console.h"
+ #include "ui/shader.h"
+ 
++#ifdef CONFIG_EGL
+ extern EGLDisplay *qemu_egl_display;
+ extern EGLConfig qemu_egl_config;
+ extern DisplayGLMode qemu_egl_mode;
+ extern bool qemu_egl_angle_d3d;
++#endif
+ 
+ typedef struct egl_fb {
+     int width;
+@@ -20,6 +49,7 @@ typedef struct egl_fb {
+     int x;
+     int y;
+     GLuint texture;
++    GLuint texture_target;
+     GLuint framebuffer;
+     bool delete_texture;
+     QemuDmaBuf *dmabuf;
+@@ -31,6 +61,10 @@ void egl_fb_destroy(egl_fb *fb);
+ void egl_fb_setup_default(egl_fb *fb, int width, int height, int x, int y);
+ void egl_fb_setup_for_tex(egl_fb *fb, int width, int height,
+                           GLuint texture, bool delete);
++void egl_fb_setup_for_tex_target(egl_fb *fb, int width, int height,
++                                 GLuint texture, GLuint target, bool delete);
++void egl_fb_setup_new_tex_target(egl_fb *fb, int width, int height,
++                                 GLuint target);
+ void egl_fb_setup_new_tex(egl_fb *fb, int width, int height);
+ void egl_fb_blit(egl_fb *dst, egl_fb *src, bool flip);
+ void egl_fb_read(DisplaySurface *dst, egl_fb *src);
+@@ -40,7 +74,9 @@ void egl_texture_blit(QemuGLShader *gls, egl_fb *dst, egl_fb *src, bool flip);
+ void egl_texture_blend(QemuGLShader *gls, egl_fb *dst, egl_fb *src, bool flip,
+                        int x, int y, double scale_x, double scale_y);
+ 
++#ifdef CONFIG_EGL
+ extern EGLContext qemu_egl_rn_ctx;
++#endif
+ 
+ #ifdef CONFIG_GBM
+ 
+@@ -59,7 +95,13 @@ void egl_dmabuf_create_fence(QemuDmaBuf *dmabuf);
+ 
+ #endif
+ 
++#ifdef CONFIG_EGL
++
+ EGLSurface qemu_egl_init_surface_x11(EGLContext ectx, EGLNativeWindowType win);
++EGLSurface qemu_egl_init_buffer_surface(EGLContext ectx, EGLenum buftype,
++                                        EGLClientBuffer buffer,
++                                        const EGLint *attrib_list);
++bool qemu_egl_destroy_surface(EGLSurface surface);
+ 
+ #if defined(CONFIG_X11) || defined(CONFIG_GBM)
+ 
+@@ -72,6 +114,10 @@ int qemu_egl_init_dpy_mesa(EGLNativeDisplayType dpy, DisplayGLMode mode);
+ int qemu_egl_init_dpy_win32(EGLNativeDisplayType dpy, DisplayGLMode mode);
+ #endif
+ 
++#ifdef CONFIG_ANGLE
++int qemu_egl_init_dpy_angle(DisplayGLMode mode);
++#endif
++
+ EGLContext qemu_egl_init_ctx(void);
+ bool qemu_egl_has_dmabuf(void);
+ 
+@@ -79,4 +125,6 @@ bool egl_init(const char *rendernode, DisplayGLMode mode, Error **errp);
+ 
+ const char *qemu_egl_get_error_string(void);
+ 
++#endif
++
+ #endif /* EGL_HELPERS_H */
+diff --git a/include/ui/spice-display.h b/include/ui/spice-display.h
+index a382553fa8e322fd59cfa5ef2bbe2fd99e94a06f..6b1f99096f6ed97e0173a83be6aa02ed8b458900 100644
+--- a/include/ui/spice-display.h
++++ b/include/ui/spice-display.h
+@@ -15,6 +15,11 @@
+  * along with this program; if not, see <http://www.gnu.org/licenses/>.
+  */
+ 
++/*
++ * Modified by OpenResearchTools, 2026-05-26.
++ * This file contains OpenResearchTools modifications for the macOS SPICE/virgl display runtime.
++ */
++
+ #ifndef UI_SPICE_DISPLAY_H
+ #define UI_SPICE_DISPLAY_H
+ 
+@@ -27,10 +32,16 @@
+ #include "ui/qemu-pixman.h"
+ #include "ui/console.h"
+ 
+-#if defined(CONFIG_OPENGL) && defined(CONFIG_GBM)
++#if defined(CONFIG_IOSURFACE)
++#  include <IOSurface/IOSurfaceRef.h>
++#endif
++
++#if defined(CONFIG_OPENGL) && (defined(CONFIG_GBM) || defined(CONFIG_IOSURFACE))
+ #  define HAVE_SPICE_GL 1
+ #  include "ui/egl-helpers.h"
+-#  include "ui/egl-context.h"
++#  if defined(CONFIG_EGL)
++#    include "ui/egl-context.h"
++#  endif
+ #endif
+ 
+ #define NUM_MEMSLOTS 8
+@@ -72,6 +83,13 @@ typedef struct QXLCookie {
+             QXLRect area;
+             int redraw;
+         } render;
++        struct {
++            QXLInstance *qxl;
++            uint32_t x;
++            uint32_t y;
++            uint32_t w;
++            uint32_t h;
++        } gl_draw;
+         void *data;
+     } u;
+ } QXLCookie;
+@@ -130,6 +148,20 @@ struct SimpleSpiceDisplay {
+     bool guest_dmabuf_refresh;
+     bool render_cursor;
+ 
++#if defined(CONFIG_IOSURFACE)
++    IOSurfaceRef iosurface;
++    int surface_send_fd;
++    int surface_recv_fd;
++    egl_fb iosurface_fb;
++    GLuint tex_id;
++    bool y_0_top;
++    uint32_t backing_id;
++    DisplayGLTextureBorrower backing_borrow;
++#endif
++#if defined(CONFIG_ANGLE)
++    EGLSurface esurface;
++#endif
++
+     egl_fb guest_fb;
+     egl_fb blit_fb;
+     egl_fb cursor_fb;
+@@ -154,7 +185,7 @@ struct SimpleSpiceCursor {
+     QXLCursor cursor;
+ };
+ 
+-extern bool spice_opengl;
++extern DisplayGLMode spice_opengl;
+ extern bool spice_remote_client;
+ extern int spice_max_refresh_rate;
+ 
+diff --git a/meson.build b/meson.build
+index 28bfe2ebc5018361a436f3b63d5e85c1b4f9b278..49a76c3764035ff9fc1829b48a0a282442442ca2 100644
+--- a/meson.build
++++ b/meson.build
+@@ -1,3 +1,6 @@
++# Modified by OpenResearchTools, 2026-05-26.
++# This file contains OpenResearchTools modifications for the macOS SPICE/virgl display runtime.
++
+ project('qemu', ['c'], meson_version: '>=1.5.0',
+         default_options: ['warning_level=1', 'c_std=gnu11', 'cpp_std=gnu++23', 'b_colorout=auto',
+                           'b_staticpic=false', 'stdsplit=false', 'optimization=2', 'b_pie=true'] +
+@@ -821,7 +824,9 @@ socket = []
+ version_res = []
+ coref = []
+ iokit = []
++iosurface = not_found
+ pvg = not_found
++quartzcore = not_found
+ emulator_link_args = []
+ midl = not_found
+ widl = not_found
+@@ -847,6 +852,8 @@ elif host_os == 'darwin'
+   coref = dependency('appleframeworks', modules: 'CoreFoundation')
+   foundation = dependency('appleframeworks', modules: 'Foundation')
+   iokit = dependency('appleframeworks', modules: 'IOKit', required: false)
++  iosurface = dependency('appleframeworks', modules: 'IOSurface', required: false)
++  quartzcore = dependency('appleframeworks', modules: ['OpenGL', 'QuartzCore'], required: false)
+   host_dsosuf = '.dylib'
+   pvg = dependency('appleframeworks', modules: ['ParavirtualizedGraphics', 'Metal'],
+                    required: get_option('pvg'))
+@@ -1800,10 +1807,12 @@ if not get_option('coreaudio').auto() or (host_os == 'darwin' and have_system)
+ endif
+ 
+ opengl = not_found
++have_epoxy_egl = false
+ if not get_option('opengl').auto() or have_system or have_vhost_user_gpu
+   epoxy = dependency('epoxy', method: 'pkg-config',
+                       required: get_option('opengl'))
+   if cc.has_header('epoxy/egl.h', dependencies: epoxy)
++    have_epoxy_egl = true
+     opengl = epoxy
+   elif get_option('opengl').enabled()
+     error('epoxy/egl.h not found')
+@@ -2468,6 +2477,9 @@ endif
+ config_host_data.set('CONFIG_CURL', curl.found())
+ config_host_data.set('CONFIG_CURSES', curses.found())
+ config_host_data.set('CONFIG_GBM', gbm.found())
++config_host_data.set('CONFIG_EGL', have_epoxy_egl)
++config_host_data.set('CONFIG_IOSURFACE', iosurface.found())
++config_host_data.set('CONFIG_ANGLE', host_os == 'darwin' and have_epoxy_egl and iosurface.found())
+ config_host_data.set('CONFIG_GIO', gio.found())
+ config_host_data.set('CONFIG_GLUSTERFS', glusterfs.found())
+ if glusterfs.found()
+diff --git a/ui/console.c b/ui/console.c
+index 799d61ec1a5a1c1abd9b81b539535fa258ae70ca..876ec7959c462245e16d4d7d4b280963a81f7bb3 100644
+--- a/ui/console.c
++++ b/ui/console.c
+@@ -22,6 +22,11 @@
+  * THE SOFTWARE.
+  */
+ 
++/*
++ * Modified by OpenResearchTools, 2026-05-26.
++ * This file contains OpenResearchTools modifications for the macOS SPICE/virgl display runtime.
++ */
++
+ #include "qemu/osdep.h"
+ #include "ui/console.h"
+ #include "ui/vgafont.h"
+@@ -281,17 +286,31 @@ static void displaychangelistener_display_console(DisplayChangeListener *dcl,
+         displaychangelistener_has_dmabuf(dcl)) {
+         dcl->ops->dpy_gl_scanout_dmabuf(dcl, con->scanout.dmabuf);
+     } else if (con->scanout.kind == SCANOUT_TEXTURE &&
+-               dcl->ops->dpy_gl_scanout_texture) {
+-        dcl->ops->dpy_gl_scanout_texture(dcl,
+-                                         con->scanout.texture.backing_id,
+-                                         con->scanout.texture.backing_y_0_top,
+-                                         con->scanout.texture.backing_width,
+-                                         con->scanout.texture.backing_height,
+-                                         con->scanout.texture.x,
+-                                         con->scanout.texture.y,
+-                                         con->scanout.texture.width,
+-                                         con->scanout.texture.height,
+-                                         con->scanout.texture.d3d_tex2d);
++               (dcl->ops->dpy_gl_scanout_texture ||
++                dcl->ops->dpy_gl_scanout_texture_borrowed)) {
++        if (con->scanout.texture.backing_borrow &&
++            dcl->ops->dpy_gl_scanout_texture_borrowed) {
++            dcl->ops->dpy_gl_scanout_texture_borrowed(
++                dcl,
++                con->scanout.texture.backing_id,
++                con->scanout.texture.backing_borrow,
++                con->scanout.texture.x,
++                con->scanout.texture.y,
++                con->scanout.texture.width,
++                con->scanout.texture.height);
++        } else if (dcl->ops->dpy_gl_scanout_texture) {
++            dcl->ops->dpy_gl_scanout_texture(
++                dcl,
++                con->scanout.texture.backing_id,
++                con->scanout.texture.backing_y_0_top,
++                con->scanout.texture.backing_width,
++                con->scanout.texture.backing_height,
++                con->scanout.texture.x,
++                con->scanout.texture.y,
++                con->scanout.texture.width,
++                con->scanout.texture.height,
++                con->scanout.texture.d3d_tex2d);
++        }
+     }
+ }
+ 
+@@ -895,8 +914,16 @@ void dpy_gl_scanout_texture(QemuConsole *con,
+ 
+     con->scanout.kind = SCANOUT_TEXTURE;
+     con->scanout.texture = (ScanoutTexture) {
+-        backing_id, backing_y_0_top, backing_width, backing_height,
+-        x, y, width, height, d3d_tex2d,
++        .backing_id = backing_id,
++        .backing_borrow = NULL,
++        .backing_y_0_top = backing_y_0_top,
++        .backing_width = backing_width,
++        .backing_height = backing_height,
++        .x = x,
++        .y = y,
++        .width = width,
++        .height = height,
++        .d3d_tex2d = d3d_tex2d,
+     };
+     QLIST_FOREACH(dcl, &s->listeners, next) {
+         if (con != dcl->con) {
+@@ -912,6 +939,57 @@ void dpy_gl_scanout_texture(QemuConsole *con,
+     }
+ }
+ 
++void dpy_gl_scanout_texture_borrowed(QemuConsole *con,
++                                     uint32_t backing_id,
++                                     DisplayGLTextureBorrower backing_borrow,
++                                     uint32_t x, uint32_t y,
++                                     uint32_t width, uint32_t height)
++{
++    DisplayState *s = con->ds;
++    DisplayChangeListener *dcl;
++    bool backing_y_0_top = false;
++    uint32_t backing_width = 0;
++    uint32_t backing_height = 0;
++    void *d3d_tex2d = NULL;
++    uint32_t tex_id = 0;
++
++    if (backing_borrow) {
++        tex_id = backing_borrow(backing_id, &backing_y_0_top,
++                                &backing_width, &backing_height,
++                                &d3d_tex2d);
++    }
++
++    con->scanout.kind = SCANOUT_TEXTURE;
++    con->scanout.texture = (ScanoutTexture) {
++        .backing_id = backing_id,
++        .backing_borrow = backing_borrow,
++        .backing_y_0_top = backing_y_0_top,
++        .backing_width = backing_width,
++        .backing_height = backing_height,
++        .x = x,
++        .y = y,
++        .width = width,
++        .height = height,
++        .d3d_tex2d = d3d_tex2d,
++    };
++    QLIST_FOREACH(dcl, &s->listeners, next) {
++        if (con != dcl->con) {
++            continue;
++        }
++        if (dcl->ops->dpy_gl_scanout_texture_borrowed) {
++            dcl->ops->dpy_gl_scanout_texture_borrowed(dcl, backing_id,
++                                                      backing_borrow,
++                                                      x, y, width, height);
++        } else if (tex_id && dcl->ops->dpy_gl_scanout_texture) {
++            dcl->ops->dpy_gl_scanout_texture(dcl, tex_id,
++                                             backing_y_0_top,
++                                             backing_width, backing_height,
++                                             x, y, width, height,
++                                             d3d_tex2d);
++        }
++    }
++}
++
+ void dpy_gl_scanout_dmabuf(QemuConsole *con,
+                            QemuDmaBuf *dmabuf)
+ {
+diff --git a/ui/egl-helpers.c b/ui/egl-helpers.c
+index e3f2872cc14beef12af27ea63a609a0c30371cae..7db9527c29c3621a56d9c11fd240a226ce0f6d28 100644
+--- a/ui/egl-helpers.c
++++ b/ui/egl-helpers.c
+@@ -14,6 +14,11 @@
+  * You should have received a copy of the GNU Lesser General Public
+  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
+  */
++
++/*
++ * Modified by OpenResearchTools, 2026-05-26.
++ * This file contains OpenResearchTools modifications for the macOS SPICE/virgl display runtime.
++ */
+ #include "qemu/osdep.h"
+ 
+ #include "qemu/drm.h"
+@@ -25,13 +30,16 @@
+ #include "trace.h"
+ #include "standard-headers/drm/drm_fourcc.h"
+ 
++#ifdef CONFIG_EGL
+ EGLDisplay *qemu_egl_display;
+ EGLConfig qemu_egl_config;
+ DisplayGLMode qemu_egl_mode;
+ bool qemu_egl_angle_d3d;
++#endif
+ 
+ /* ------------------------------------------------------------------ */
+ 
++#ifdef CONFIG_EGL
+ const char *qemu_egl_get_error_string(void)
+ {
+     EGLint error = eglGetError();
+@@ -71,6 +79,7 @@ const char *qemu_egl_get_error_string(void)
+         return "Unknown EGL error";
+     }
+ }
++#endif
+ 
+ static void egl_fb_delete_texture(egl_fb *fb)
+ {
+@@ -96,6 +105,7 @@ void egl_fb_destroy(egl_fb *fb)
+     fb->x = 0;
+     fb->y = 0;
+     fb->texture = 0;
++    fb->texture_target = 0;
+     fb->framebuffer = 0;
+ }
+ 
+@@ -110,12 +120,20 @@ void egl_fb_setup_default(egl_fb *fb, int width, int height, int x, int y)
+ 
+ void egl_fb_setup_for_tex(egl_fb *fb, int width, int height,
+                           GLuint texture, bool delete)
++{
++    egl_fb_setup_for_tex_target(fb, width, height, texture,
++                                GL_TEXTURE_2D, delete);
++}
++
++void egl_fb_setup_for_tex_target(egl_fb *fb, int width, int height,
++                                 GLuint texture, GLuint target, bool delete)
+ {
+     egl_fb_delete_texture(fb);
+ 
+     fb->width = width;
+     fb->height = height;
+     fb->texture = texture;
++    fb->texture_target = target;
+     fb->delete_texture = delete;
+     if (!fb->framebuffer) {
+         glGenFramebuffers(1, &fb->framebuffer);
+@@ -123,19 +141,25 @@ void egl_fb_setup_for_tex(egl_fb *fb, int width, int height,
+ 
+     glBindFramebuffer(GL_FRAMEBUFFER_EXT, fb->framebuffer);
+     glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT,
+-                              GL_TEXTURE_2D, fb->texture, 0);
++                              fb->texture_target, fb->texture, 0);
+ }
+ 
+-void egl_fb_setup_new_tex(egl_fb *fb, int width, int height)
++void egl_fb_setup_new_tex_target(egl_fb *fb, int width, int height,
++                                 GLuint target)
+ {
+     GLuint texture;
+ 
+     glGenTextures(1, &texture);
+-    glBindTexture(GL_TEXTURE_2D, texture);
+-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height,
++    glBindTexture(target, texture);
++    glTexImage2D(target, 0, GL_RGBA, width, height,
+                  0, GL_BGRA, GL_UNSIGNED_BYTE, 0);
+ 
+-    egl_fb_setup_for_tex(fb, width, height, texture, true);
++    egl_fb_setup_for_tex_target(fb, width, height, texture, target, true);
++}
++
++void egl_fb_setup_new_tex(egl_fb *fb, int width, int height)
++{
++    egl_fb_setup_new_tex_target(fb, width, height, GL_TEXTURE_2D);
+ }
+ 
+ void egl_fb_blit(egl_fb *dst, egl_fb *src, bool flip)
+@@ -197,9 +221,13 @@ void egl_texture_blit(QemuGLShader *gls, egl_fb *dst, egl_fb *src, bool flip)
+ {
+     glBindFramebuffer(GL_FRAMEBUFFER_EXT, dst->framebuffer);
+     glViewport(0, 0, dst->width, dst->height);
+-    glEnable(GL_TEXTURE_2D);
+-    glBindTexture(GL_TEXTURE_2D, src->texture);
++    if (!src->texture_target) {
++        src->texture_target = GL_TEXTURE_2D;
++    }
++    glEnable(src->texture_target);
++    glBindTexture(src->texture_target, src->texture);
+     qemu_gl_run_texture_blit(gls, flip);
++    glDisable(src->texture_target);
+ }
+ 
+ void egl_texture_blend(QemuGLShader *gls, egl_fb *dst, egl_fb *src, bool flip,
+@@ -213,16 +241,21 @@ void egl_texture_blend(QemuGLShader *gls, egl_fb *dst, egl_fb *src, bool flip,
+     } else {
+         glViewport(x, dst->height - h - y, w, h);
+     }
+-    glEnable(GL_TEXTURE_2D);
+-    glBindTexture(GL_TEXTURE_2D, src->texture);
++    if (!src->texture_target) {
++        src->texture_target = GL_TEXTURE_2D;
++    }
++    glEnable(src->texture_target);
++    glBindTexture(src->texture_target, src->texture);
+     glEnable(GL_BLEND);
+     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+     qemu_gl_run_texture_blit(gls, flip);
+     glDisable(GL_BLEND);
++    glDisable(src->texture_target);
+ }
+ 
+ /* ---------------------------------------------------------------------- */
+ 
++#ifdef CONFIG_EGL
+ EGLContext qemu_egl_rn_ctx;
+ 
+ #ifdef CONFIG_GBM
+@@ -488,9 +521,42 @@ EGLSurface qemu_egl_init_surface_x11(EGLContext ectx, EGLNativeWindowType win)
+     return esurface;
+ }
+ 
++EGLSurface qemu_egl_init_buffer_surface(EGLContext ectx,
++                                        EGLenum buftype,
++                                        EGLClientBuffer buffer,
++                                        const EGLint *attrib_list)
++{
++    EGLSurface esurface;
++    EGLBoolean b;
++
++    esurface = eglCreatePbufferFromClientBuffer(qemu_egl_display,
++                                                buftype,
++                                                buffer,
++                                                qemu_egl_config,
++                                                attrib_list);
++    if (esurface == EGL_NO_SURFACE) {
++        error_report("egl: eglCreatePbufferFromClientBuffer failed");
++        return NULL;
++    }
++
++    b = eglMakeCurrent(qemu_egl_display, esurface, esurface, ectx);
++    if (b == EGL_FALSE) {
++        error_report("egl: eglMakeCurrent failed");
++        qemu_egl_destroy_surface(esurface);
++        return NULL;
++    }
++
++    return esurface;
++}
++
++bool qemu_egl_destroy_surface(EGLSurface surface)
++{
++    return eglDestroySurface(qemu_egl_display, surface);
++}
++
+ /* ---------------------------------------------------------------------- */
+ 
+-#if defined(CONFIG_X11) || defined(CONFIG_GBM) || defined(WIN32)
++#if defined(CONFIG_X11) || defined(CONFIG_GBM) || defined(CONFIG_ANGLE) || defined(WIN32)
+ 
+ /*
+  * Taken from glamor_egl.h from the Xorg xserver, which is MIT licensed
+@@ -621,6 +687,13 @@ int qemu_egl_init_dpy_mesa(EGLNativeDisplayType dpy, DisplayGLMode mode)
+ #endif
+ 
+ 
++#ifdef CONFIG_ANGLE
++int qemu_egl_init_dpy_angle(DisplayGLMode mode)
++{
++    return qemu_egl_init_dpy(EGL_DEFAULT_DISPLAY, EGL_PLATFORM_ANGLE_ANGLE, mode);
++}
++#endif
++
+ #ifdef WIN32
+ int qemu_egl_init_dpy_win32(EGLNativeDisplayType dpy, DisplayGLMode mode)
+ {
+@@ -733,3 +806,4 @@ bool egl_init(const char *rendernode, DisplayGLMode mode, Error **errp)
+     display_opengl = 1;
+     return true;
+ }
++#endif
+diff --git a/ui/meson.build b/ui/meson.build
+index ceaf110683dc5ddaede6d53cd1d4831aa6573518..63aa45f73eef5ae56fe07e063b68b9484a77dd18 100644
+--- a/ui/meson.build
++++ b/ui/meson.build
+@@ -1,3 +1,6 @@
++# Modified by OpenResearchTools, 2026-05-26.
++# This file contains OpenResearchTools modifications for the macOS SPICE/virgl display runtime.
++
+ system_ss.add(pixman)
+ system_ss.add(png)
+ system_ss.add(files(
+@@ -61,11 +64,14 @@ if opengl.found()
+   opengl_ss = ss.source_set()
+   opengl_ss.add(gbm, pixman)
+   opengl_ss.add(when: [opengl],
+-               if_true: files('shader.c', 'console-gl.c', 'egl-helpers.c', 'egl-context.c'))
++               if_true: files('shader.c', 'console-gl.c', 'egl-helpers.c'))
++  if have_epoxy_egl
++    opengl_ss.add(when: [opengl], if_true: files('egl-context.c'))
++  endif
+   ui_modules += {'opengl' : opengl_ss}
+ endif
+ 
+-if opengl.found()
++if opengl.found() and have_epoxy_egl
+   egl_headless_ss = ss.source_set()
+   egl_headless_ss.add(when: [opengl, pixman],
+                       if_true: [files('egl-headless.c'), gbm])
+@@ -114,8 +120,10 @@ if gtk.found()
+   gtk_ss.add(gtk, vte, pixman, files('gtk.c'))
+   gtk_ss.add(files('gtk-clipboard.c'))
+   gtk_ss.add(when: x11, if_true: files('x_keymap.c'))
+-  gtk_ss.add(when: opengl, if_true: files('gtk-gl-area.c'))
+-  gtk_ss.add(when: [x11, opengl], if_true: files('gtk-egl.c'))
++  if have_epoxy_egl
++    gtk_ss.add(when: opengl, if_true: files('gtk-gl-area.c'))
++    gtk_ss.add(when: [x11, opengl], if_true: files('gtk-egl.c'))
++  endif
+   ui_modules += {'gtk' : gtk_ss}
+ endif
+ 
+@@ -126,7 +134,9 @@ if sdl.found()
+     'sdl2-input.c',
+     'sdl2.c',
+   ))
+-  sdl_ss.add(when: opengl, if_true: files('sdl2-gl.c'))
++  if have_epoxy_egl
++    sdl_ss.add(when: opengl, if_true: files('sdl2-gl.c'))
++  endif
+   sdl_ss.add(when: x11, if_true: files('x_keymap.c'))
+   ui_modules += {'sdl' : sdl_ss}
+ endif
+@@ -138,6 +148,12 @@ if spice.found()
+     'spice-input.c',
+     'spice-display.c'
+   ))
++  if iosurface.found()
++    spice_core_ss.add(iosurface)
++  endif
++  if quartzcore.found()
++    spice_core_ss.add(quartzcore)
++  endif
+   ui_modules += {'spice-core' : spice_core_ss}
+ 
+   if gio.found()
+diff --git a/ui/shader.c b/ui/shader.c
+index 76ee4c32785d42f76d2ed16fc67a3d47cc0a1123..a44c1f35f0b7ce4da38ed4726a429d53bef0dc17 100644
+--- a/ui/shader.c
++++ b/ui/shader.c
+@@ -24,6 +24,11 @@
+  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+  * THE SOFTWARE.
+  */
++
++/*
++ * Modified by OpenResearchTools, 2026-05-26.
++ * This file contains OpenResearchTools modifications for the macOS SPICE/virgl display runtime.
++ */
+ #include "qemu/osdep.h"
+ #include <epoxy/gl.h>
+ #include "ui/shader.h"
+@@ -88,7 +93,25 @@ static GLuint qemu_gl_create_compile_shader(GLenum type, const GLchar *src)
+     char *errmsg;
+ 
+     shader = glCreateShader(type);
+-    glShaderSource(shader, 1, &src, 0);
++    if (epoxy_is_desktop_gl()) {
++        static const GLchar desktop_header[] = "#version 140\n";
++        const GLchar *body = src;
++        const GLchar *newline;
++
++        if (g_str_has_prefix(src, "#version")) {
++            newline = strchr(src, '\n');
++            body = newline ? newline + 1 : "";
++        }
++
++        const GLchar *desktop_src[] = {
++            desktop_header,
++            body,
++        };
++
++        glShaderSource(shader, 2, desktop_src, 0);
++    } else {
++        glShaderSource(shader, 1, &src, 0);
++    }
+     glCompileShader(shader);
+ 
+     glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
+diff --git a/ui/spice-core.c b/ui/spice-core.c
+index ef1c00134fa4cf450f1abdb0e9342dc65c20a9cb..7ed39ceb8615e6b45b36752705b08b9d4ef8b702 100644
+--- a/ui/spice-core.c
++++ b/ui/spice-core.c
+@@ -15,6 +15,11 @@
+  * along with this program; if not, see <http://www.gnu.org/licenses/>.
+  */
+ 
++/*
++ * Modified by OpenResearchTools, 2026-05-26.
++ * This file contains OpenResearchTools modifications for the macOS SPICE/virgl display runtime.
++ */
++
+ #include "qemu/osdep.h"
+ #include <spice.h>
+ 
+@@ -50,6 +55,10 @@ static int spice_migration_completed;
+ static int spice_display_is_running;
+ static int spice_have_target_host;
+ 
++#ifdef CONFIG_ANGLE
++extern EGLContext spice_gl_ctx;
++#endif
++
+ struct SpiceTimer {
+     QEMUTimer *timer;
+ };
+@@ -514,7 +523,7 @@ static QemuOptsList qemu_spice_opts = {
+ #ifdef HAVE_SPICE_GL
+         },{
+             .name = "gl",
+-            .type = QEMU_OPT_BOOL,
++            .type = QEMU_OPT_STRING,
+         },{
+             .name = "rendernode",
+             .type = QEMU_OPT_STRING,
+@@ -848,7 +857,23 @@ static void qemu_spice_init(void)
+     g_free(password);
+ 
+ #ifdef HAVE_SPICE_GL
+-    if (qemu_opt_get_bool(opts, "gl", 0)) {
++    const char *gl_str = qemu_opt_get(opts, "gl");
++    DisplayGLMode gl_mode = DISPLAY_GL_MODE_OFF;
++
++    if (gl_str) {
++        if (g_str_equal(gl_str, "on") || g_str_equal(gl_str, "true")) {
++            gl_mode = DISPLAY_GL_MODE_ON;
++        } else if (g_str_equal(gl_str, "core")) {
++            gl_mode = DISPLAY_GL_MODE_CORE;
++        } else if (g_str_equal(gl_str, "es")) {
++            gl_mode = DISPLAY_GL_MODE_ES;
++        } else if (!g_str_equal(gl_str, "off") && !g_str_equal(gl_str, "false")) {
++            error_report("spice: invalid gl mode '%s' (expected off/on/core/es)", gl_str);
++            exit(1);
++        }
++    }
++
++    if (gl_mode != DISPLAY_GL_MODE_OFF) {
+         if ((port != 0) || (tls_port != 0)) {
+ #if SPICE_SERVER_VERSION >= 0x000f03 /* release 0.15.3 */
+             const char *video_codec = NULL;
+@@ -871,8 +896,26 @@ static void qemu_spice_init(void)
+             exit(1);
+ #endif
+         }
+-        egl_init(qemu_opt_get(opts, "rendernode"), DISPLAY_GL_MODE_ON, &error_fatal);
+-        spice_opengl = 1;
++#if defined(CONFIG_GBM)
++        egl_init(qemu_opt_get(opts, "rendernode"), gl_mode, &error_fatal);
++        spice_opengl = gl_mode;
++#elif defined(CONFIG_ANGLE)
++        if (qemu_egl_init_dpy_angle(DISPLAY_GL_MODE_ES)) {
++            error_report("SPICE GL failed to initialize ANGLE display");
++            exit(1);
++        }
++
++        spice_gl_ctx = qemu_egl_init_ctx();
++        if (!spice_gl_ctx) {
++            error_report("egl: egl_init_ctx failed");
++            exit(1);
++        }
++        display_opengl = 1;
++        spice_opengl = DISPLAY_GL_MODE_ES;
++#else
++        error_report("SPICE GL support is not available on this platform");
++        exit(1);
++#endif
+     }
+ #endif
+ }
+diff --git a/ui/spice-display.c b/ui/spice-display.c
+index 87cc193cdee51cd4101f0f0eaa9ea1427492f410..1b23cd62275690c78c25f220ae33004b5571e62d 100644
+--- a/ui/spice-display.c
++++ b/ui/spice-display.c
+@@ -15,6 +15,11 @@
+  * along with this program; if not, see <http://www.gnu.org/licenses/>.
+  */
+ 
++/*
++ * Modified by OpenResearchTools, 2026-05-26.
++ * This file contains OpenResearchTools modifications for the macOS SPICE/virgl display runtime.
++ */
++
+ #include "qemu/osdep.h"
+ #include "ui/qemu-spice.h"
+ #include "qemu/error-report.h"
+@@ -23,6 +28,8 @@
+ #include "qemu/main-loop.h"
+ #include "qemu/option.h"
+ #include "qemu/queue.h"
++#include "system/system.h"
++#include "qemu/sockets.h"
+ #include "ui/console.h"
+ #include "trace.h"
+ 
+@@ -30,10 +36,33 @@
+ 
+ #include "standard-headers/drm/drm_fourcc.h"
+ 
+-bool spice_opengl;
++#ifdef CONFIG_IOSURFACE
++#include <TargetConditionals.h>
++#include <IOSurface/IOSurface.h>
++#endif
++#ifdef CONFIG_ANGLE
++#ifndef GL_TEXTURE_2D
++#define GL_TEXTURE_2D 0x0DE1
++#endif
++#ifndef GL_UNSIGNED_BYTE
++#define GL_UNSIGNED_BYTE 0x1401
++#endif
++#ifndef GL_TEXTURE_RECTANGLE_ANGLE
++#define GL_TEXTURE_RECTANGLE_ANGLE 0x84F5
++#endif
++#ifndef GL_BGRA_EXT
++#define GL_BGRA_EXT 0x80E1
++#endif
++#endif
++
++DisplayGLMode spice_opengl;
+ bool spice_remote_client;
+ int spice_max_refresh_rate;
+ 
++#ifdef CONFIG_ANGLE
++EGLContext spice_gl_ctx;
++#endif
++
+ int qemu_spice_rect_is_empty(const QXLRect* r)
+ {
+     return r->top == r->bottom || r->left == r->right;
+@@ -783,6 +812,216 @@ static const DisplayChangeListenerOps display_listener_ops = {
+ 
+ #ifdef HAVE_SPICE_GL
+ 
++static void qemu_spice_gl_block(SimpleSpiceDisplay *ssd, bool block);
++
++#if defined(CONFIG_IOSURFACE)
++
++static void AddIntegerValue(CFMutableDictionaryRef dictionary,
++                            const CFStringRef key, int32_t value)
++{
++    CFNumberRef number = CFNumberCreate(kCFAllocatorDefault,
++                                        kCFNumberSInt32Type, &value);
++    CFDictionaryAddValue(dictionary, key, number);
++    CFRelease(number);
++}
++
++static bool spice_iosurface_create_angle(SimpleSpiceDisplay *ssd,
++                                         int width, int height,
++                                         IOSurfaceRef surface)
++{
++#if defined(CONFIG_ANGLE)
++    EGLint target = 0;
++    GLenum tex_target = 0;
++    const EGLint attribs[] = {
++        EGL_WIDTH,                         width,
++        EGL_HEIGHT,                        height,
++        EGL_IOSURFACE_PLANE_ANGLE,         0,
++        EGL_TEXTURE_TARGET,                0,
++        EGL_TEXTURE_INTERNAL_FORMAT_ANGLE, GL_BGRA_EXT,
++        EGL_TEXTURE_FORMAT,                EGL_TEXTURE_RGBA,
++        EGL_TEXTURE_TYPE_ANGLE,            GL_UNSIGNED_BYTE,
++        EGL_IOSURFACE_USAGE_HINT_ANGLE,    EGL_IOSURFACE_WRITE_HINT_ANGLE,
++        EGL_NONE,                          EGL_NONE,
++    };
++    EGLint mutable_attribs[G_N_ELEMENTS(attribs)];
++
++    memcpy(mutable_attribs, attribs, sizeof(attribs));
++    if (eglGetConfigAttrib(qemu_egl_display,
++                           qemu_egl_config,
++                           EGL_BIND_TO_TEXTURE_TARGET_ANGLE,
++                           &target) != EGL_TRUE) {
++        error_report("spice_iosurface_create: eglGetConfigAttrib failed");
++        return false;
++    }
++    if (target == EGL_TEXTURE_2D) {
++        tex_target = GL_TEXTURE_2D;
++    } else if (target == EGL_TEXTURE_RECTANGLE_ANGLE) {
++        tex_target = GL_TEXTURE_RECTANGLE_ANGLE;
++    } else {
++        error_report("spice_iosurface_create: unsupported ANGLE texture target");
++        return false;
++    }
++
++    mutable_attribs[7] = target;
++    ssd->esurface = qemu_egl_init_buffer_surface(spice_gl_ctx,
++                                                 EGL_IOSURFACE_ANGLE,
++                                                 surface,
++                                                 mutable_attribs);
++    if (ssd->esurface == EGL_NO_SURFACE) {
++        return false;
++    }
++
++    egl_fb_setup_new_tex_target(&ssd->iosurface_fb, width, height, tex_target);
++    if (eglBindTexImage(qemu_egl_display, ssd->esurface, EGL_BACK_BUFFER) != EGL_TRUE) {
++        error_report("spice_iosurface_create: eglBindTexImage failed");
++        egl_fb_destroy(&ssd->iosurface_fb);
++        qemu_egl_destroy_surface(ssd->esurface);
++        ssd->esurface = EGL_NO_SURFACE;
++        return false;
++    }
++    return true;
++#else
++    error_report("spice_iosurface_create: ANGLE not available");
++    return false;
++#endif
++}
++
++static bool spice_iosurface_create(SimpleSpiceDisplay *ssd,
++                                   int width, int height)
++{
++    IOSurfaceRef surface;
++    CFMutableDictionaryRef dict;
++
++    dict = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
++                                     &kCFTypeDictionaryKeyCallBacks,
++                                     &kCFTypeDictionaryValueCallBacks);
++    AddIntegerValue(dict, kIOSurfaceWidth, width);
++    AddIntegerValue(dict, kIOSurfaceHeight, height);
++    AddIntegerValue(dict, kIOSurfacePixelFormat, 'BGRA');
++    AddIntegerValue(dict, kIOSurfaceBytesPerElement, 4);
++#if TARGET_OS_OSX
++    CFDictionaryAddValue(dict, kIOSurfaceIsGlobal, kCFBooleanTrue);
++#endif
++
++    surface = IOSurfaceCreate(dict);
++    CFRelease(dict);
++    if (!surface) {
++        error_report("spice_iosurface_create: IOSurfaceCreate failed");
++        return false;
++    }
++
++    ssd->iosurface = surface;
++    if (!spice_iosurface_create_angle(ssd, width, height, surface)) {
++        ssd->iosurface = NULL;
++        CFRelease(surface);
++        return false;
++    }
++
++    return true;
++}
++
++static void spice_iosurface_destroy(SimpleSpiceDisplay *ssd)
++{
++    if (!ssd->iosurface) {
++        return;
++    }
++
++#if defined(CONFIG_ANGLE)
++    if (ssd->esurface != EGL_NO_SURFACE) {
++        eglMakeCurrent(qemu_egl_display, ssd->esurface, ssd->esurface, spice_gl_ctx);
++        eglReleaseTexImage(qemu_egl_display, ssd->esurface, EGL_BACK_BUFFER);
++        qemu_egl_destroy_surface(ssd->esurface);
++        ssd->esurface = EGL_NO_SURFACE;
++    }
++    egl_fb_destroy(&ssd->iosurface_fb);
++#endif
++
++    if (ssd->surface_send_fd > -1) {
++        close(ssd->surface_send_fd);
++        ssd->surface_send_fd = -1;
++    }
++    if (ssd->surface_recv_fd > -1) {
++        close(ssd->surface_recv_fd);
++        ssd->surface_recv_fd = -1;
++    }
++    CFRelease(ssd->iosurface);
++    ssd->iosurface = NULL;
++}
++
++static bool spice_iosurface_resize(SimpleSpiceDisplay *ssd,
++                                   int width, int height)
++{
++    if (ssd->iosurface) {
++        if (IOSurfaceGetHeight(ssd->iosurface) != height ||
++            IOSurfaceGetWidth(ssd->iosurface) != width) {
++            spice_iosurface_destroy(ssd);
++            return spice_iosurface_create(ssd, width, height);
++        }
++        return true;
++    }
++
++    return spice_iosurface_create(ssd, width, height);
++}
++
++static int spice_iosurface_create_fd(SimpleSpiceDisplay *ssd, int *fourcc)
++{
++    int fds[2];
++    IOSurfaceID surfaceid;
++
++    if (!ssd->iosurface) {
++        return -1;
++    }
++    if (qemu_socketpair(AF_UNIX, SOCK_STREAM, 0, fds) < 0) {
++        error_report("spice_iosurface_create_fd: failed to create socketpair");
++        return -1;
++    }
++    if (ssd->surface_send_fd > -1) {
++        close(ssd->surface_send_fd);
++    }
++    if (ssd->surface_recv_fd > -1) {
++        close(ssd->surface_recv_fd);
++    }
++
++    ssd->surface_recv_fd = fds[0];
++    ssd->surface_send_fd = fds[1];
++    *fourcc = 'BGRA';
++    surfaceid = IOSurfaceGetID(ssd->iosurface);
++    if (write(ssd->surface_send_fd, &surfaceid, sizeof(surfaceid)) !=
++        sizeof(surfaceid) ||
++        write(ssd->surface_recv_fd, &surfaceid, sizeof(surfaceid)) !=
++        sizeof(surfaceid)) {
++        close(fds[0]);
++        close(fds[1]);
++        ssd->surface_recv_fd = -1;
++        ssd->surface_send_fd = -1;
++        return -1;
++    }
++    return fds[0];
++}
++
++static void spice_iosurface_blit(SimpleSpiceDisplay *ssd, GLuint src_texture,
++                                 bool flip)
++{
++    egl_fb tmp_fb = {
++        .texture = src_texture,
++        .texture_target = GL_TEXTURE_2D,
++    };
++
++    if (!ssd->iosurface || !src_texture) {
++        return;
++    }
++
++#if defined(CONFIG_ANGLE)
++    if (ssd->esurface == EGL_NO_SURFACE) {
++        return;
++    }
++    eglMakeCurrent(qemu_egl_display, ssd->esurface, ssd->esurface, spice_gl_ctx);
++    egl_texture_blit(ssd->gls, &ssd->iosurface_fb, &tmp_fb, flip);
++#endif
++}
++
++#endif /* CONFIG_IOSURFACE */
++
+ static void qemu_spice_gl_monitor_config(SimpleSpiceDisplay *ssd,
+                                          int x, int y, int w, int h)
+ {
+@@ -877,9 +1103,15 @@ static void spice_gl_update(DisplayChangeListener *dcl,
+     SimpleSpiceDisplay *ssd = container_of(dcl, SimpleSpiceDisplay, dcl);
+ 
+     surface_gl_update_texture(ssd->gls, ssd->ds, x, y, w, h);
++#if defined(CONFIG_IOSURFACE)
++    if (!qemu_console_is_gl_blocked(ssd->dcl.con)) {
++        spice_iosurface_blit(ssd, ssd->ds->texture, true);
++    }
++#endif
+     ssd->gl_updates++;
+ }
+ 
++#if defined(CONFIG_GBM)
+ static bool spice_gl_replace_fd_texture(SimpleSpiceDisplay *ssd,
+                                         int *fds, uint64_t *modifier,
+                                         int *num_planes)
+@@ -961,6 +1193,7 @@ static bool spice_gl_replace_fd_texture(SimpleSpiceDisplay *ssd,
+     }
+     return ret;
+ }
++#endif
+ 
+ static void spice_server_gl_scanout(QXLInstance *qxl,
+                                     const int *fd,
+@@ -970,7 +1203,10 @@ static void spice_server_gl_scanout(QXLInstance *qxl,
+                                     uint32_t num_planes, uint32_t format,
+                                     uint64_t modifier, int y_0_top)
+ {
+-#ifdef HAVE_SPICE_QXL_GL_SCANOUT2
++#if defined(CONFIG_IOSURFACE)
++    /* IOSurface scanout passes a pipe fd carrying an IOSurfaceID, not a dmabuf plane. */
++#endif
++#if defined(HAVE_SPICE_QXL_GL_SCANOUT2) && !defined(CONFIG_IOSURFACE)
+     spice_qxl_gl_scanout2(qxl, fd, width, height, offset, stride,
+                           num_planes, format, modifier, y_0_top);
+ #else
+@@ -988,16 +1221,17 @@ static void spice_gl_switch(DisplayChangeListener *dcl,
+                             struct DisplaySurface *new_surface)
+ {
+     SimpleSpiceDisplay *ssd = container_of(dcl, SimpleSpiceDisplay, dcl);
+-    bool ret;
+ 
+     if (ssd->ds) {
+         surface_gl_destroy_texture(ssd->gls, ssd->ds);
+     }
+     ssd->ds = new_surface;
+     if (ssd->ds) {
++#if defined(CONFIG_GBM)
+         uint32_t offset[DMABUF_MAX_PLANES], stride[DMABUF_MAX_PLANES];
+         int fd[DMABUF_MAX_PLANES], num_planes, fourcc;
+         uint64_t modifier;
++        bool ret;
+ 
+         surface_gl_create_texture(ssd->gls, ssd->ds);
+         if (!egl_dmabuf_export_texture(ssd->ds->texture,
+@@ -1034,13 +1268,71 @@ static void spice_gl_switch(DisplayChangeListener *dcl,
+         qemu_spice_gl_monitor_config(ssd, 0, 0,
+                                      surface_width(ssd->ds),
+                                      surface_height(ssd->ds));
++#elif defined(CONFIG_IOSURFACE)
++        uint32_t offset[1] = { 0 };
++        uint32_t stride[1] = { surface_width(ssd->ds) * 4 };
++        int fd[1], fourcc = 0;
++
++        surface_gl_create_texture(ssd->gls, ssd->ds);
++        if (!spice_iosurface_resize(ssd, surface_width(ssd->ds),
++                                    surface_height(ssd->ds))) {
++            surface_gl_destroy_texture(ssd->gls, ssd->ds);
++            return;
++        }
++        spice_iosurface_blit(ssd, ssd->ds->texture, true);
++        fd[0] = spice_iosurface_create_fd(ssd, &fourcc);
++        if (fd[0] < 0) {
++            surface_gl_destroy_texture(ssd->gls, ssd->ds);
++            return;
++        }
++
++        trace_qemu_spice_gl_surface(ssd->qxl.id,
++                                    surface_width(ssd->ds),
++                                    surface_height(ssd->ds),
++                                    fourcc);
++
++        spice_server_gl_scanout(&ssd->qxl, fd,
++                                surface_width(ssd->ds),
++                                surface_height(ssd->ds),
++                                offset, stride, 1, fourcc,
++                                DRM_FORMAT_MOD_INVALID, false);
++        ssd->have_surface = true;
++        ssd->have_scanout = false;
++
++        qemu_spice_gl_monitor_config(ssd, 0, 0,
++                                     surface_width(ssd->ds),
++                                     surface_height(ssd->ds));
++#endif
+     }
+ }
+ 
+ static QEMUGLContext qemu_spice_gl_create_context(DisplayGLCtx *dgc,
+                                                   QEMUGLParams *params)
+ {
++#if defined(CONFIG_ANGLE)
++    return qemu_egl_create_context(dgc, params, spice_gl_ctx);
++#elif defined(CONFIG_EGL)
+     return qemu_egl_create_context(dgc, params, qemu_egl_rn_ctx);
++#else
++    return NULL;
++#endif
++}
++
++static void qemu_spice_gl_destroy_context(DisplayGLCtx *dgc, QEMUGLContext ctx)
++{
++#ifdef CONFIG_EGL
++    qemu_egl_destroy_context(dgc, ctx);
++#endif
++}
++
++static int qemu_spice_gl_make_context_current(DisplayGLCtx *dgc,
++                                              QEMUGLContext ctx)
++{
++#ifdef CONFIG_EGL
++    return qemu_egl_make_context_current(dgc, ctx);
++#else
++    return -1;
++#endif
+ }
+ 
+ static void qemu_spice_gl_scanout_disable(DisplayChangeListener *dcl)
+@@ -1067,6 +1357,12 @@ static void qemu_spice_gl_scanout_disable(DisplayChangeListener *dcl)
+     qemu_spice_gl_monitor_config(ssd, 0, 0, 0, 0);
+     ssd->have_surface = false;
+     ssd->have_scanout = false;
++#if defined(CONFIG_IOSURFACE)
++    spice_iosurface_destroy(ssd);
++    ssd->tex_id = 0;
++    ssd->backing_id = 0;
++    ssd->backing_borrow = NULL;
++#endif
+ }
+ 
+ static void qemu_spice_gl_scanout_texture(DisplayChangeListener *dcl,
+@@ -1079,6 +1375,8 @@ static void qemu_spice_gl_scanout_texture(DisplayChangeListener *dcl,
+                                           void *d3d_tex2d)
+ {
+     SimpleSpiceDisplay *ssd = container_of(dcl, SimpleSpiceDisplay, dcl);
++    (void)d3d_tex2d;
++#if defined(CONFIG_GBM)
+     EGLint offset[DMABUF_MAX_PLANES], stride[DMABUF_MAX_PLANES], fourcc = 0;
+     int fd[DMABUF_MAX_PLANES], num_planes, i;
+     uint64_t modifier;
+@@ -1114,6 +1412,70 @@ static void qemu_spice_gl_scanout_texture(DisplayChangeListener *dcl,
+ 
+     ssd->have_surface = false;
+     ssd->have_scanout = true;
++#elif defined(CONFIG_IOSURFACE)
++    uint32_t offset[1] = { 0 };
++    uint32_t stride[1] = { backing_width * 4 };
++    int fd[1], fourcc = 0;
++
++    if (!spice_iosurface_resize(ssd, backing_width, backing_height)) {
++        fprintf(stderr, "%s: failed to create IOSurface\n", __func__);
++        return;
++    }
++
++    ssd->tex_id = tex_id;
++    ssd->y_0_top = y_0_top;
++    ssd->backing_id = 0;
++    ssd->backing_borrow = NULL;
++
++    spice_iosurface_blit(ssd, tex_id, !y_0_top);
++    fd[0] = spice_iosurface_create_fd(ssd, &fourcc);
++    if (fd[0] < 0) {
++        fprintf(stderr, "%s: failed to create IOSurface fd\n", __func__);
++        return;
++    }
++
++    trace_qemu_spice_gl_scanout_texture(ssd->qxl.id, w, h, fourcc);
++    spice_server_gl_scanout(&ssd->qxl, fd, backing_width, backing_height,
++                            offset, stride, 1, fourcc,
++                            DRM_FORMAT_MOD_INVALID, y_0_top);
++    qemu_spice_gl_monitor_config(ssd, x, y, w, h);
++
++    ssd->have_surface = false;
++    ssd->have_scanout = true;
++#endif
++}
++
++static void qemu_spice_gl_scanout_texture_borrowed(DisplayChangeListener *dcl,
++                                                   uint32_t backing_id,
++                                                   DisplayGLTextureBorrower backing_borrow,
++                                                   uint32_t x, uint32_t y,
++                                                   uint32_t w, uint32_t h)
++{
++    SimpleSpiceDisplay *ssd = container_of(dcl, SimpleSpiceDisplay, dcl);
++    bool y_0_top = false;
++    uint32_t backing_width = 0;
++    uint32_t backing_height = 0;
++    void *d3d_tex2d = NULL;
++    uint32_t tex_id;
++
++    if (!backing_borrow) {
++        return;
++    }
++
++    tex_id = backing_borrow(backing_id, &y_0_top,
++                            &backing_width, &backing_height,
++                            &d3d_tex2d);
++    if (!tex_id) {
++        return;
++    }
++
++    qemu_spice_gl_scanout_texture(dcl, tex_id, y_0_top,
++                                  backing_width, backing_height,
++                                  x, y, w, h, d3d_tex2d);
++#if defined(CONFIG_IOSURFACE)
++    ssd->backing_id = backing_id;
++    ssd->backing_borrow = backing_borrow;
++#endif
+ }
+ 
+ static void qemu_spice_gl_scanout_dmabuf(DisplayChangeListener *dcl,
+@@ -1133,6 +1495,7 @@ static void qemu_spice_gl_cursor_dmabuf(DisplayChangeListener *dcl,
+                                         uint32_t hot_x, uint32_t hot_y)
+ {
+     SimpleSpiceDisplay *ssd = container_of(dcl, SimpleSpiceDisplay, dcl);
++#if defined(CONFIG_GBM)
+     uint32_t width, height, texture;
+ 
+     ssd->have_hot = have_hot;
+@@ -1152,6 +1515,12 @@ static void qemu_spice_gl_cursor_dmabuf(DisplayChangeListener *dcl,
+     } else {
+         egl_fb_destroy(&ssd->cursor_fb);
+     }
++#else
++    ssd->have_hot = have_hot;
++    ssd->hot_x = hot_x;
++    ssd->hot_y = hot_y;
++    trace_qemu_spice_gl_cursor(ssd->qxl.id, dmabuf != NULL, have_hot);
++#endif
+ }
+ 
+ static void qemu_spice_gl_cursor_position(DisplayChangeListener *dcl,
+@@ -1174,9 +1543,12 @@ static void qemu_spice_gl_release_dmabuf(DisplayChangeListener *dcl,
+         ssd->guest_dmabuf = NULL;
+         ssd->guest_dmabuf_refresh = false;
+     }
++#if defined(CONFIG_GBM)
+     egl_dmabuf_release_texture(dmabuf);
++#endif
+ }
+ 
++#if defined(CONFIG_GBM)
+ static bool spice_gl_blit_scanout_texture(SimpleSpiceDisplay *ssd)
+ {
+     uint32_t offsets[DMABUF_MAX_PLANES], strides[DMABUF_MAX_PLANES];
+@@ -1220,21 +1592,25 @@ static bool spice_gl_blit_scanout_texture(SimpleSpiceDisplay *ssd)
+     ssd->new_scanout_texture = false;
+     return true;
+ }
++#endif
+ 
+ static void qemu_spice_gl_update(DisplayChangeListener *dcl,
+                                  uint32_t x, uint32_t y, uint32_t w, uint32_t h)
+ {
+     SimpleSpiceDisplay *ssd = container_of(dcl, SimpleSpiceDisplay, dcl);
++#if defined(CONFIG_GBM)
+     EGLint fourcc = 0;
+     bool render_cursor = false;
+     bool y_0_top = false; /* FIXME */
+     bool ret;
+     uint32_t width, height, texture;
++#endif
+ 
+     if (!ssd->have_scanout) {
+         return;
+     }
+ 
++#if defined(CONFIG_GBM)
+     if (ssd->cursor_fb.texture) {
+         render_cursor = true;
+     }
+@@ -1329,6 +1705,24 @@ static void qemu_spice_gl_update(DisplayChangeListener *dcl,
+             return;
+         }
+     }
++#elif defined(CONFIG_IOSURFACE)
++    if (ssd->backing_borrow) {
++        uint32_t tex_id;
++        bool y_0_top = false;
++
++        tex_id = ssd->backing_borrow(ssd->backing_id, &y_0_top,
++                                     NULL, NULL, NULL);
++        if (!tex_id) {
++            return;
++        }
++        ssd->tex_id = tex_id;
++        ssd->y_0_top = y_0_top;
++    }
++    spice_iosurface_blit(ssd, ssd->tex_id, !ssd->y_0_top);
++    if (!ssd->tex_id) {
++        return;
++    }
++#endif
+ 
+     trace_qemu_spice_gl_update(ssd->qxl.id, w, h, x, y);
+     qemu_spice_gl_block(ssd, true);
+@@ -1359,6 +1753,7 @@ static const DisplayChangeListenerOps display_listener_gl_ops = {
+ 
+     .dpy_gl_scanout_disable  = qemu_spice_gl_scanout_disable,
+     .dpy_gl_scanout_texture  = qemu_spice_gl_scanout_texture,
++    .dpy_gl_scanout_texture_borrowed = qemu_spice_gl_scanout_texture_borrowed,
+     .dpy_gl_scanout_dmabuf   = qemu_spice_gl_scanout_dmabuf,
+     .dpy_gl_cursor_dmabuf    = qemu_spice_gl_cursor_dmabuf,
+     .dpy_gl_cursor_position  = qemu_spice_gl_cursor_position,
+@@ -1376,8 +1771,8 @@ qemu_spice_is_compatible_dcl(DisplayGLCtx *dgc,
+ static const DisplayGLCtxOps gl_ctx_ops = {
+     .dpy_gl_ctx_is_compatible_dcl = qemu_spice_is_compatible_dcl,
+     .dpy_gl_ctx_create       = qemu_spice_gl_create_context,
+-    .dpy_gl_ctx_destroy      = qemu_egl_destroy_context,
+-    .dpy_gl_ctx_make_current = qemu_egl_make_context_current,
++    .dpy_gl_ctx_destroy      = qemu_spice_gl_destroy_context,
++    .dpy_gl_ctx_make_current = qemu_spice_gl_make_context_current,
+ };
+ 
+ #endif /* HAVE_SPICE_GL */
+@@ -1392,7 +1787,7 @@ static void qemu_spice_display_init_one(QemuConsole *con)
+ 
+     ssd->dcl.ops = &display_listener_ops;
+ #ifdef HAVE_SPICE_GL
+-    if (spice_opengl) {
++    if (spice_opengl != DISPLAY_GL_MODE_OFF) {
+         ssd->dcl.ops = &display_listener_gl_ops;
+         ssd->dgc.ops = &gl_ctx_ops;
+         ssd->gl_unblock_bh = qemu_bh_new(qemu_spice_gl_unblock_bh, ssd);
+@@ -1401,6 +1796,17 @@ static void qemu_spice_display_init_one(QemuConsole *con)
+         ssd->gls = qemu_gl_init_shader();
+         ssd->have_surface = false;
+         ssd->have_scanout = false;
++#if defined(CONFIG_IOSURFACE)
++        ssd->iosurface = NULL;
++        ssd->surface_send_fd = -1;
++        ssd->surface_recv_fd = -1;
++        ssd->tex_id = 0;
++        ssd->backing_id = 0;
++        ssd->backing_borrow = NULL;
++#endif
++#if defined(CONFIG_ANGLE)
++        ssd->esurface = EGL_NO_SURFACE;
++#endif
+     }
+ #endif
+     ssd->dcl.con = con;
+@@ -1419,7 +1824,7 @@ static void qemu_spice_display_init_one(QemuConsole *con)
+ 
+     qemu_spice_create_host_memslot(ssd);
+ 
+-    if (spice_opengl) {
++    if (spice_opengl != DISPLAY_GL_MODE_OFF) {
+         qemu_console_set_display_gl_ctx(con, &ssd->dgc);
+     }
+     register_displaychangelistener(&ssd->dcl);

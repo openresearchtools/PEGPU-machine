@@ -1,0 +1,3 @@
+openresearchtools_vfiouserhostapp_head=03afc4c29c58850d9a09594d260d0a05809aa19f
+openresearchtools_vfiouserhostapp_head_subject=Update VFIO Apple launcher changes
+openresearchtools_vfiouserhostapp_source=https://github.com/openresearchtools/VFIOUserHostApp.git

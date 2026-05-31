@@ -1,0 +1,6 @@
+utmapp_qemu_visual_runtime_source=https://github.com/utmapp/qemu/tree/utm-edition
+utmapp_qemu_visual_runtime_revision=338fdd995e8f665edbdb1acd0f1b63f2ca3c266c
+utmapp_qemu_visual_runtime_reference_tag=v10.0.2-utm
+utmapp_qemu_visual_runtime_reference_tag_revision=37ba092d59aff24900dfd0d5e01d4ed68441ba07
+utmapp_qemu_visual_runtime_scope=macOS SPICE/virgl/ANGLE/IOSurface display behavior adapted into the GPL QEMU patch layer
+utmapp_qemu_visual_runtime_license=QEMU GPL-2.0-or-later file licensing; see QEMU COPYING and per-file headers in the patched source tree

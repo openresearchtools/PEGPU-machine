@@ -1,0 +1,21 @@
+.DS_Store
+
+# Local scratch trees and build outputs
+qemu-source/
+artifacts/
+dist/
+build-*/
+*.dSYM/
+*.xcarchive
+
+# Release/runtime payloads are produced by CI, not committed
+*.zip
+*.tar
+*.tar.gz
+*.dmg
+*.qcow2
+*.iso
+
+# Private local notes
+.codex-state/
+*.private.md

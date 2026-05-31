@@ -1,0 +1,1104 @@
+# Modified by OpenResearchTools, 2026-05-26.
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+name: Build vEGPU Machine no-SIP package
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "App version to write into CFBundleShortVersionString, for example 1.0.0"
+        required: false
+        type: string
+      build_number:
+        description: "Build number to write into CFBundleVersion. Defaults to the GitHub run number."
+        required: false
+        type: string
+      publish_release:
+        description: "Create/update a GitHub Release and upload the zip/source assets."
+        required: true
+        default: false
+        type: boolean
+      prerelease:
+        description: "Mark the GitHub Release as a pre-release when publishing."
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  debian-kernels:
+    name: Resolve Debian guest kernels
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+
+    steps:
+      - name: Build kernel matrix
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          for url in \
+            https://deb.debian.org/debian/dists/trixie/main/binary-arm64/Packages.xz \
+            https://deb.debian.org/debian/dists/trixie-updates/main/binary-arm64/Packages.xz \
+            https://security.debian.org/debian-security/dists/trixie-security/main/binary-arm64/Packages.xz
+          do
+            curl --fail --location --silent --show-error "$url" | xz -dc >> "$work/Packages"
+            printf '\n' >> "$work/Packages"
+          done
+          python3 - "$work/Packages" "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import re
+          import sys
+
+          packages_path, output_path = sys.argv[1], sys.argv[2]
+          text = open(packages_path, "r", encoding="utf-8", errors="replace").read()
+          packages = {}
+          for paragraph in text.split("\n\n"):
+              fields = {}
+              current = None
+              for line in paragraph.splitlines():
+                  if not line:
+                      continue
+                  if line.startswith(" ") and current:
+                      fields[current] += "\n" + line
+                      continue
+                  if ": " in line:
+                      current, value = line.split(": ", 1)
+                      fields[current] = value
+              package = fields.get("Package")
+              version = fields.get("Version")
+              if package and version:
+                  packages[package] = version
+
+          header_re = re.compile(r"^linux-headers-(6\.12\.(\d+)\+deb13(?:\+\d+)?-arm64)$")
+          image_id = "debian-13-generic-arm64-20260509-2473"
+          image_url = "https://cloud.debian.org/images/cloud/trixie/20260509-2473/debian-13-generic-arm64-20260509-2473.qcow2"
+          image_sha512 = "16edf9daf931f2038d9f6ed4ee3e66d6e40c0cd3826dda83563a48ef1d76cb11a51ea9094b1e727deb4ed1bd253a58bd3c135c5cc77468ff64c1029878bc32dc"
+          rows = []
+
+          for package, version in sorted(packages.items()):
+              match = header_re.match(package)
+              if not match:
+                  continue
+              abi, patchlevel = match.group(1), int(match.group(2))
+              if patchlevel < 86:
+                  continue
+              common = f"linux-headers-{abi.removesuffix('-arm64')}-common"
+              common_version = packages.get(common)
+              if common_version != version:
+                  raise SystemExit(f"{package}: missing matching common headers package {common}={version}")
+              rows.append({
+                  "kernel_abi": abi,
+                  "kernel_debian_version": version,
+                  "common_headers_package": common,
+                  "image_id": image_id,
+                  "image_url": image_url,
+                  "image_sha512": image_sha512,
+                  "safe_kernel": re.sub(r"[^0-9A-Za-z._-]+", "-", abi),
+              })
+
+          rows.sort(key=lambda row: [int(part) for part in row["kernel_abi"].split("+", 1)[0].split(".")])
+          if not rows:
+              raise SystemExit("no Debian arm64 kernel header rows found")
+
+          matrix = {"include": rows}
+          print(json.dumps(matrix, indent=2))
+          with open(output_path, "a", encoding="utf-8") as out:
+              out.write("matrix=" + json.dumps(matrix, separators=(",", ":")) + "\n")
+          PY
+
+  guest-tools:
+    name: Build Debian guest tools
+    runs-on: ubuntu-24.04-arm
+    needs: debian-kernels
+    defaults:
+      run:
+        shell: bash
+        working-directory: qemu-source
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.debian-kernels.outputs.matrix) }}
+
+    env:
+      KERNEL_ABI: ${{ matrix.kernel_abi }}
+      KERNEL_DEBIAN_VERSION: ${{ matrix.kernel_debian_version }}
+      COMMON_HEADERS_PACKAGE: ${{ matrix.common_headers_package }}
+      IMAGE_ID: ${{ matrix.image_id }}
+      DEBIAN_IMAGE_URL: ${{ matrix.image_url }}
+      DEBIAN_IMAGE_SHA512: ${{ matrix.image_sha512 }}
+      DEBIAN_FRONTEND: noninteractive
+      REQUIRE_PREBUILT: "1"
+
+    steps:
+      - name: Checkout patch control branch
+        uses: actions/checkout@v6
+        with:
+          path: patch-control
+
+      - name: Checkout clean QEMU base
+        uses: actions/checkout@v6
+        with:
+          ref: base
+          path: qemu-source
+          persist-credentials: false
+
+      - name: Apply source patch stack
+        run: |
+          PATCH_STACK_DIR="../patch-control/patch-stack"
+          copy_patch_assets() {
+            local asset_dir="$PATCH_STACK_DIR/03-openresearchtools-vfiouserhostapp-core/assets"
+            if [[ -d "$asset_dir" ]]; then
+              cp -R "$asset_dir"/. .
+            fi
+          }
+          git remote set-url --push origin DISABLED
+          if [[ -x contrib/apple-dma/scripts/build-guest-driver-bundle.sh ]]; then
+            copy_patch_assets
+            echo "source patch stack already applied"
+            exit 0
+          fi
+          test -f "$PATCH_STACK_DIR/01-scottjg-qemu-vfio-apple-wip/0001-scottjg-qemu-vfio-apple-wip.patch"
+          test -f "$PATCH_STACK_DIR/02-utmapp-qemu-based-visual-runtime/0001-utmapp-qemu-based-visual-runtime.patch"
+          test -f "$PATCH_STACK_DIR/03-openresearchtools-vfiouserhostapp-core/0001-openresearchtools-vfiouserhostapp-core.patch"
+          git apply \
+            --exclude='.github/workflows/build-nosip.yml' \
+            "$PATCH_STACK_DIR/01-scottjg-qemu-vfio-apple-wip/0001-scottjg-qemu-vfio-apple-wip.patch"
+          git apply \
+            --exclude='.github/workflows/build-nosip.yml' \
+            "$PATCH_STACK_DIR/02-utmapp-qemu-based-visual-runtime/0001-utmapp-qemu-based-visual-runtime.patch"
+          git apply \
+            --exclude='.github/workflows/build-nosip.yml' \
+            "$PATCH_STACK_DIR/03-openresearchtools-vfiouserhostapp-core/0001-openresearchtools-vfiouserhostapp-core.patch"
+          copy_patch_assets
+          rm -rf patch-stack
+          cp -R "$PATCH_STACK_DIR" patch-stack
+          find patch-stack -name '.DS_Store' -delete
+
+      - name: Add Debian trixie repositories
+        run: |
+          sudo install -d -m 0755 /etc/apt/keyrings
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debian-archive-keyring
+          sudo cp /usr/share/keyrings/debian-archive-keyring.gpg /etc/apt/keyrings/debian-trixie.gpg
+          cat <<'EOF' | sudo tee /etc/apt/sources.list.d/debian-trixie.list
+          deb [arch=arm64 signed-by=/etc/apt/keyrings/debian-trixie.gpg] https://deb.debian.org/debian trixie main
+          deb [arch=arm64 signed-by=/etc/apt/keyrings/debian-trixie.gpg] https://deb.debian.org/debian trixie-updates main
+          deb [arch=arm64 signed-by=/etc/apt/keyrings/debian-trixie.gpg] https://security.debian.org/debian-security trixie-security main
+          EOF
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+
+      - name: Install build dependencies and pinned Debian headers
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            dkms \
+            dpkg-dev \
+            jq \
+            linux-headers-${KERNEL_ABI}=${KERNEL_DEBIAN_VERSION} \
+            ${COMMON_HEADERS_PACKAGE}=${KERNEL_DEBIAN_VERSION}
+
+      - name: Build guest driver packages and manifest
+        run: contrib/apple-dma/scripts/build-guest-driver-bundle.sh
+
+      - name: Validate guest tools
+        run: |
+          test -f artifacts/guest-tools/manifest.json
+          test -f artifacts/guest-tools/vegpu-guest-driver-bundle.tar.gz
+          test -f artifacts/guest-tools/SHA512SUMS
+          test ! -d artifacts/guest-tools/work
+          jq -e '.driver.dkmsPackages | length == 1' artifacts/guest-tools/manifest.json
+          jq -e '.driver.prebuiltPackages | length == 1' artifacts/guest-tools/manifest.json
+          find artifacts/guest-tools/packages -type f -name 'apple-dma-*.deb' -print -quit | grep -q .
+          find artifacts/guest-tools/source -type f -name 'apple-dma-*.tar.gz' -print -quit | grep -q .
+          sha512sum -c artifacts/guest-tools/SHA512SUMS
+
+      - name: Upload guest tools
+        uses: actions/upload-artifact@v7
+        with:
+          name: vegpu-guest-driver-debian13-arm64-${{ matrix.safe_kernel }}
+          path: qemu-source/artifacts/guest-tools
+          if-no-files-found: error
+
+  qemu-runtime:
+    name: Build macOS QEMU runtime
+    runs-on: macos-15
+    defaults:
+      run:
+        shell: bash
+        working-directory: qemu-source
+
+    steps:
+      - name: Checkout patch control branch
+        uses: actions/checkout@v6
+        with:
+          path: patch-control
+
+      - name: Checkout clean QEMU base
+        uses: actions/checkout@v6
+        with:
+          ref: base
+          path: qemu-source
+          persist-credentials: false
+
+      - name: Apply source patch stack
+        run: |
+          PATCH_STACK_DIR="../patch-control/patch-stack"
+          copy_patch_assets() {
+            local asset_dir="$PATCH_STACK_DIR/03-openresearchtools-vfiouserhostapp-core/assets"
+            if [[ -d "$asset_dir" ]]; then
+              cp -R "$asset_dir"/. .
+            fi
+          }
+          git remote set-url --push origin DISABLED
+          if [[ -x contrib/apple-vfio/scripts/build-nosip.sh ]] && grep -q 'CONFIG_ANGLE' include/ui/egl-helpers.h; then
+            copy_patch_assets
+            echo "source patch stack already applied"
+            exit 0
+          fi
+          test -f "$PATCH_STACK_DIR/01-scottjg-qemu-vfio-apple-wip/0001-scottjg-qemu-vfio-apple-wip.patch"
+          test -f "$PATCH_STACK_DIR/02-utmapp-qemu-based-visual-runtime/0001-utmapp-qemu-based-visual-runtime.patch"
+          test -f "$PATCH_STACK_DIR/03-openresearchtools-vfiouserhostapp-core/0001-openresearchtools-vfiouserhostapp-core.patch"
+          git apply \
+            --exclude='.github/workflows/build-nosip.yml' \
+            "$PATCH_STACK_DIR/01-scottjg-qemu-vfio-apple-wip/0001-scottjg-qemu-vfio-apple-wip.patch"
+          git apply \
+            --exclude='.github/workflows/build-nosip.yml' \
+            "$PATCH_STACK_DIR/02-utmapp-qemu-based-visual-runtime/0001-utmapp-qemu-based-visual-runtime.patch"
+          git apply \
+            --exclude='.github/workflows/build-nosip.yml' \
+            "$PATCH_STACK_DIR/03-openresearchtools-vfiouserhostapp-core/0001-openresearchtools-vfiouserhostapp-core.patch"
+          copy_patch_assets
+          rm -rf patch-stack
+          cp -R "$PATCH_STACK_DIR" patch-stack
+          find patch-stack -name '.DS_Store' -delete
+
+      - name: Show Xcode
+        run: |
+          xcodebuild -version
+          xcode-select -p
+
+      - name: Install QEMU build dependencies
+        run: |
+          brew update
+          brew install \
+            bzip2 \
+            ccache \
+            glib \
+            gnutls \
+            gst-plugins-base \
+            gstreamer \
+            jpeg-turbo \
+            libepoxy \
+            libpng \
+            libslirp \
+            libusb \
+            lz4 \
+            lzo \
+            meson \
+            ninja \
+            opus \
+            orc \
+            pixman \
+            pkg-config \
+            snappy \
+            zstd
+
+      - name: Restore display dependency cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/vegpu/qemu-display-deps
+          key: ${{ runner.os }}-nosip-display-deps-opengl-virgl-${{ hashFiles('patch-control/patch-stack/**') }}
+
+      - name: Build display dependencies
+        id: display-deps
+        run: |
+          DISPLAY_DEPS="$HOME/.cache/vegpu/qemu-display-deps"
+          DISPLAY_SRC="$RUNNER_TEMP/qemu-display-src"
+          DEPS_PC="$DISPLAY_DEPS/lib/pkgconfig:$DISPLAY_DEPS/share/pkgconfig:${PKG_CONFIG_PATH:-}"
+          if PKG_CONFIG_PATH="$DEPS_PC" pkg-config --modversion epoxy | grep -Fx '1.5.10' && \
+             PKG_CONFIG_PATH="$DEPS_PC" pkg-config --variable=epoxy_has_egl epoxy | grep -Fx '1' && \
+             PKG_CONFIG_PATH="$DEPS_PC" pkg-config --modversion openssl | grep -Fx '4.3.2' && \
+             PKG_CONFIG_PATH="$DEPS_PC" pkg-config --modversion spice-protocol | grep -Fx '0.14.5' && \
+             PKG_CONFIG_PATH="$DEPS_PC" pkg-config --modversion spice-server | grep -Fx '0.16.0' && \
+             test -f "$DISPLAY_DEPS/include/epoxy/egl.h" && \
+             test -f "$DISPLAY_DEPS/include/EGL/eglplatform.h" && \
+             test -f "$DISPLAY_DEPS/lib/libepoxy.0.dylib" && \
+             test -f "$DISPLAY_DEPS/lib/libspice-server.1.dylib" && \
+             test -f "$DISPLAY_DEPS/lib/libssl.60.dylib" && \
+             test -f "$DISPLAY_DEPS/lib/libcrypto.57.dylib" && \
+             test ! -e "$DISPLAY_DEPS/lib/libssl.3.dylib" && \
+             test ! -e "$DISPLAY_DEPS/lib/libcrypto.3.dylib" && \
+             test -f "$DISPLAY_DEPS"/lib/libvirglrenderer*.dylib && \
+             test ! -d "$DISPLAY_DEPS/libexec"
+          then
+            echo "using cached display dependencies at $DISPLAY_DEPS"
+          else
+            rm -rf "$DISPLAY_DEPS"
+            contrib/apple-vfio/scripts/build-display-deps.sh "$DISPLAY_DEPS" "$DISPLAY_SRC"
+          fi
+          echo "prefix=$DISPLAY_DEPS" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch QEMU Meson subprojects
+        run: |
+          meson subprojects download \
+            berkeley-softfloat-3 \
+            berkeley-testfloat-3 \
+            dtc \
+            keycodemapdb
+          for subproject in \
+            berkeley-softfloat-3 \
+            berkeley-testfloat-3 \
+            dtc \
+            keycodemapdb
+          do
+            test -d "subprojects/$subproject"
+          done
+
+      - name: Prepare QEMU Python wheelhouse
+        run: |
+          python3 -m pip download \
+            --only-binary=:all: \
+            --dest python/wheels \
+            'setuptools>=44.1.1' \
+            'wheel>=0.34.2' \
+            'pip>=20.3.4'
+          test -f python/wheels/qemu_qmp-0.0.5-py3-none-any.whl
+          python3 - <<'PY'
+          from pathlib import Path
+          wheels = [p.name for p in Path("python/wheels").glob("*.whl")]
+          required = ("setuptools-", "wheel-", "pip-")
+          missing = [prefix for prefix in required if not any(name.startswith(prefix) for name in wheels)]
+          if missing:
+              raise SystemExit(f"missing wheel(s): {', '.join(missing)}")
+          for name in sorted(wheels):
+              print(name)
+          PY
+
+      - name: Restore QEMU compiler cache
+        uses: actions/cache@v5
+        with:
+          path: ~/Library/Caches/ccache
+          key: ${{ runner.os }}-nosip-qemu-ccache-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-nosip-qemu-ccache-${{ github.ref_name }}-
+            ${{ runner.os }}-nosip-qemu-ccache-
+
+      - name: Configure QEMU
+        run: |
+          mkdir -p build-qemu-nosip
+          cd build-qemu-nosip
+          export PKG_CONFIG_PATH="${{ steps.display-deps.outputs.prefix }}/lib/pkgconfig:${{ steps.display-deps.outputs.prefix }}/share/pkgconfig:${PKG_CONFIG_PATH:-}"
+          ../configure \
+            --target-list=aarch64-softmmu \
+            --enable-bzip2 \
+            --enable-cocoa \
+            --enable-fdt=internal \
+            --enable-gnutls \
+            --enable-hvf \
+            --enable-opengl \
+            --enable-libusb \
+            --enable-pixman \
+            --enable-spice \
+            --enable-spice-protocol \
+            --enable-slirp \
+            --enable-virglrenderer \
+            --enable-vhost-user \
+            --enable-zstd \
+            --disable-dbus-display \
+            --disable-gtk \
+            --disable-sdl \
+            --disable-docs \
+            --disable-download \
+            --disable-werror
+        env:
+          CC: ccache clang
+          CXX: ccache clang++
+
+      - name: Build QEMU binaries
+        run: ninja -C build-qemu-nosip qemu-system-aarch64 qemu-img
+
+      - name: Show compiler cache stats
+        if: always()
+        run: ccache --show-stats || true
+
+      - name: Verify required frontend devices
+        run: |
+          build-qemu-nosip/qemu-system-aarch64 -machine virt -device help | tee "$RUNNER_TEMP/qemu-devices.txt"
+          grep -E 'vhost-user-fs-(pci|device)' "$RUNNER_TEMP/qemu-devices.txt"
+          grep -E 'vfio-apple-pci' "$RUNNER_TEMP/qemu-devices.txt"
+          grep -E 'vfio-apple-auto-pci' "$RUNNER_TEMP/qemu-devices.txt"
+          grep -E 'virtio-gpu-gl-pci' "$RUNNER_TEMP/qemu-devices.txt"
+          build-qemu-nosip/qemu-system-aarch64 -machine virt -spice help > "$RUNNER_TEMP/qemu-spice.txt" || test "$?" = "1"
+          cat "$RUNNER_TEMP/qemu-spice.txt"
+          grep -E '^[[:space:]]*gl=' "$RUNNER_TEMP/qemu-spice.txt"
+
+      - name: Build QEMU dist
+        run: |
+          contrib/apple-vfio/scripts/make-dist.sh build-qemu-nosip dist
+          test -x dist/qemu-system-aarch64
+          test -x dist/qemu-img
+          test -f dist/lib/libspice-server.1.dylib
+          find dist/lib -maxdepth 1 -type f -name 'libssl*.dylib' -print -quit | grep -q .
+          find dist/lib -maxdepth 1 -type f -name 'libcrypto*.dylib' -print -quit | grep -q .
+          otool -L dist/lib/libspice-server.1.dylib | tee "$RUNNER_TEMP/spice-server-links.txt"
+          grep -E '@loader_path/libssl.*\.dylib' "$RUNNER_TEMP/spice-server-links.txt"
+          grep -E '@loader_path/libcrypto.*\.dylib' "$RUNNER_TEMP/spice-server-links.txt"
+          test -f dist/lib/libssl.60.dylib
+          test -f dist/lib/libcrypto.57.dylib
+          test ! -e dist/lib/libssl.3.dylib
+          test ! -e dist/lib/libcrypto.3.dylib
+          otool -L dist/lib/*.dylib dist/qemu-system-aarch64 dist/qemu-img > "$RUNNER_TEMP/qemu-dist-links.txt"
+          python3 -c 'import sys; data=open(sys.argv[1], "rb").read(); assert b"/openssl@3/" not in data' "$RUNNER_TEMP/qemu-dist-links.txt"
+          test -f dist/share/qemu/edk2-aarch64-code.fd
+          test -f dist/share/qemu/edk2-arm-vars.fd
+          test ! -d dist/libexec
+          test -f dist/share/qemu/efi-virtio.rom
+          test ! -e dist/share/qemu/npcm7xx_bootrom.bin
+          test ! -e dist/share/qemu/npcm8xx_bootrom.bin
+          test ! -e dist/share/qemu/ast27x0_bootrom.bin
+          printf '%s\n' \
+            edk2-aarch64-code.fd \
+            edk2-arm-vars.fd \
+            efi-virtio.rom \
+            > "$RUNNER_TEMP/expected-qemu-data.txt"
+          find dist/share/qemu -type f | sed 's#^dist/share/qemu/##' | sort > "$RUNNER_TEMP/actual-qemu-data.txt"
+          diff -u "$RUNNER_TEMP/expected-qemu-data.txt" "$RUNNER_TEMP/actual-qemu-data.txt"
+        env:
+          CODESIGN_IDENTITY: "-"
+
+      - name: Stage QEMU runtime artifact
+        run: |
+          rm -rf artifacts/qemu-runtime
+          mkdir -p artifacts/qemu-runtime/subprojects
+          rsync -a dist artifacts/qemu-runtime/
+          for subproject in \
+            berkeley-softfloat-3 \
+            berkeley-testfloat-3 \
+            dtc \
+            keycodemapdb
+          do
+            rsync -a --exclude='.git' --exclude='*/.git' \
+              "subprojects/$subproject" artifacts/qemu-runtime/subprojects/
+          done
+          test -x artifacts/qemu-runtime/dist/qemu-system-aarch64
+          test -f artifacts/qemu-runtime/subprojects/dtc/README.license
+
+      - name: Upload QEMU runtime
+        uses: actions/upload-artifact@v7
+        with:
+          name: vegpu-qemu-runtime-macos-arm64
+          path: qemu-source/artifacts/qemu-runtime
+          if-no-files-found: error
+
+  build:
+    name: Package and ad-hoc sign
+    runs-on: macos-15
+    needs:
+      - guest-tools
+      - qemu-runtime
+    defaults:
+      run:
+        shell: bash
+        working-directory: qemu-source
+
+    steps:
+      - name: Checkout patch control branch
+        uses: actions/checkout@v6
+        with:
+          path: patch-control
+
+      - name: Checkout clean QEMU base
+        uses: actions/checkout@v6
+        with:
+          ref: base
+          path: qemu-source
+          persist-credentials: false
+
+      - name: Apply source patch stack
+        run: |
+          PATCH_STACK_DIR="../patch-control/patch-stack"
+          copy_patch_assets() {
+            local asset_dir="$PATCH_STACK_DIR/03-openresearchtools-vfiouserhostapp-core/assets"
+            if [[ -d "$asset_dir" ]]; then
+              cp -R "$asset_dir"/. .
+            fi
+          }
+          git remote set-url --push origin DISABLED
+          if [[ -x contrib/apple-vfio/scripts/build-nosip.sh ]] && grep -q 'CONFIG_ANGLE' include/ui/egl-helpers.h; then
+            copy_patch_assets
+            echo "source patch stack already applied"
+            exit 0
+          fi
+          test -f "$PATCH_STACK_DIR/01-scottjg-qemu-vfio-apple-wip/0001-scottjg-qemu-vfio-apple-wip.patch"
+          test -f "$PATCH_STACK_DIR/02-utmapp-qemu-based-visual-runtime/0001-utmapp-qemu-based-visual-runtime.patch"
+          test -f "$PATCH_STACK_DIR/03-openresearchtools-vfiouserhostapp-core/0001-openresearchtools-vfiouserhostapp-core.patch"
+          git apply \
+            --exclude='.github/workflows/build-nosip.yml' \
+            "$PATCH_STACK_DIR/01-scottjg-qemu-vfio-apple-wip/0001-scottjg-qemu-vfio-apple-wip.patch"
+          git apply \
+            --exclude='.github/workflows/build-nosip.yml' \
+            "$PATCH_STACK_DIR/02-utmapp-qemu-based-visual-runtime/0001-utmapp-qemu-based-visual-runtime.patch"
+          git apply \
+            --exclude='.github/workflows/build-nosip.yml' \
+            "$PATCH_STACK_DIR/03-openresearchtools-vfiouserhostapp-core/0001-openresearchtools-vfiouserhostapp-core.patch"
+          copy_patch_assets
+          rm -rf patch-stack
+          cp -R "$PATCH_STACK_DIR" patch-stack
+          find patch-stack -name '.DS_Store' -delete
+
+      - name: Download guest tools
+        uses: actions/download-artifact@v8
+        with:
+          pattern: vegpu-guest-driver-debian13-arm64-*
+          path: qemu-source/artifacts/guest-tools-parts
+
+      - name: Download QEMU runtime
+        uses: actions/download-artifact@v8
+        with:
+          name: vegpu-qemu-runtime-macos-arm64
+          path: qemu-source/artifacts/qemu-runtime
+
+      - name: Restore QEMU runtime
+        id: qemu-runtime
+        run: |
+          chmod +x \
+            artifacts/qemu-runtime/dist/qemu-system-aarch64 \
+            artifacts/qemu-runtime/dist/qemu-img
+          test -x artifacts/qemu-runtime/dist/qemu-system-aarch64
+          test -x artifacts/qemu-runtime/dist/qemu-img
+          test ! -d artifacts/qemu-runtime/dist/libexec
+          test -f artifacts/qemu-runtime/dist/lib/libspice-server.1.dylib
+          test -f artifacts/qemu-runtime/subprojects/dtc/README.license
+          rm -rf dist
+          rsync -a artifacts/qemu-runtime/dist/ dist/
+          chmod +x dist/qemu-system-aarch64 dist/qemu-img
+          mkdir -p subprojects
+          for subproject in \
+            berkeley-softfloat-3 \
+            berkeley-testfloat-3 \
+            dtc \
+            keycodemapdb
+          do
+            rm -rf "subprojects/$subproject"
+            rsync -a "artifacts/qemu-runtime/subprojects/$subproject" subprojects/
+            test -d "subprojects/$subproject"
+          done
+          otool -L dist/lib/libspice-server.1.dylib | tee "$RUNNER_TEMP/spice-server-links.txt"
+          grep -E '@loader_path/libssl.*\.dylib' "$RUNNER_TEMP/spice-server-links.txt"
+          grep -E '@loader_path/libcrypto.*\.dylib' "$RUNNER_TEMP/spice-server-links.txt"
+          test -f dist/lib/libssl.60.dylib
+          test -f dist/lib/libcrypto.57.dylib
+          test ! -e dist/lib/libssl.3.dylib
+          test ! -e dist/lib/libcrypto.3.dylib
+          otool -L dist/lib/*.dylib dist/qemu-system-aarch64 dist/qemu-img > "$RUNNER_TEMP/restored-qemu-runtime-links.txt"
+          python3 -c 'import sys; data=open(sys.argv[1], "rb").read(); assert b"/openssl@3/" not in data' "$RUNNER_TEMP/restored-qemu-runtime-links.txt"
+          test -f dist/share/qemu/edk2-aarch64-code.fd
+          test -f dist/share/qemu/edk2-arm-vars.fd
+          test ! -d dist/libexec
+          test -f dist/share/qemu/efi-virtio.rom
+          test ! -e dist/share/qemu/npcm7xx_bootrom.bin
+          test ! -e dist/share/qemu/npcm8xx_bootrom.bin
+          test ! -e dist/share/qemu/ast27x0_bootrom.bin
+          echo "dist=$PWD/dist" >> "$GITHUB_OUTPUT"
+
+      - name: Merge guest tools
+        run: |
+          contrib/apple-dma/scripts/merge-guest-driver-bundles.sh \
+            artifacts/guest-tools \
+            artifacts/guest-tools-parts/*
+          python3 - artifacts/guest-tools/manifest.json <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], "r", encoding="utf-8") as f:
+              manifest = json.load(f)
+          assert manifest["manifestVersion"] == 2
+          dkms = manifest["driver"]["dkmsPackages"]
+          prebuilt = manifest["driver"]["prebuiltPackages"]
+          kernels = manifest["kernels"]
+          assert len(dkms) == 1
+          assert prebuilt
+          assert kernels
+          assert len(prebuilt) == len(kernels)
+          for kernel in kernels:
+              assert len(kernel.get("prebuiltPackages", [])) == 1
+          PY
+          (cd artifacts/guest-tools && shasum -a 512 -c SHA512SUMS)
+
+      - name: Resolve app version
+        id: version
+        run: |
+          VERSION="${{ inputs.release_version }}"
+          BUILD_NUMBER="${{ inputs.build_number }}"
+          PUBLISH_RELEASE="${{ inputs.publish_release }}"
+          if [[ "$PUBLISH_RELEASE" == "true" && -z "$VERSION" ]]; then
+            echo "release_version is required when publish_release is enabled" >&2
+            exit 1
+          fi
+          if [[ -z "$VERSION" ]]; then
+            VERSION="$(awk -F ' = |;' '/MARKETING_VERSION =/ { print $2; exit }' contrib/apple-vfio/VFIOUserHostApp.xcodeproj/project.pbxproj)"
+          fi
+          if [[ -z "$BUILD_NUMBER" ]]; then
+            BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
+          fi
+          case "$VERSION" in
+            *[!0-9A-Za-z._-]*|"")
+              echo "invalid release version: $VERSION" >&2
+              exit 1
+              ;;
+          esac
+          case "$BUILD_NUMBER" in
+            *[!0-9A-Za-z._-]*|"")
+              echo "invalid build number: $BUILD_NUMBER" >&2
+              exit 1
+              ;;
+          esac
+          {
+            echo "marketing_version=$VERSION"
+            echo "build_number=$BUILD_NUMBER"
+          } >> "$GITHUB_OUTPUT"
+          printf 'App version: %s (%s)\n' "$VERSION" "$BUILD_NUMBER"
+
+      - name: Show Xcode
+        run: |
+          xcodebuild -version
+          xcode-select -p
+
+      - name: Build no-SIP app
+        id: nosip
+        run: contrib/apple-vfio/scripts/build-nosip.sh --build
+        env:
+          CONFIGURATION: Release
+          ARCHS: arm64
+          ONLY_ACTIVE_ARCH: "NO"
+          QEMU_DIST_DIR: ${{ steps.qemu-runtime.outputs.dist }}
+          SOURCE_ARCHIVE_DIR: ${{ runner.temp }}/vegpu-machine-source-inputs/third-party-sources
+          MARKETING_VERSION: ${{ steps.version.outputs.marketing_version }}
+          CURRENT_PROJECT_VERSION: ${{ steps.version.outputs.build_number }}
+          VGPU_PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          VGPU_RELEASE_TAG: v${{ steps.version.outputs.marketing_version }}
+
+      - name: Validate bundled tools
+        run: |
+          APP="${{ steps.nosip.outputs.app }}"
+          DEXT="${{ steps.nosip.outputs.dext }}"
+          PROBE="$RUNNER_TEMP/probe.qcow2"
+          test -d "$APP"
+          test "$(basename "$APP")" = "vEGPU Machine.app"
+          test -d "$DEXT"
+          test -x "$APP/Contents/MacOS/vEGPU Machine"
+          test -x "$APP/Contents/MacOS/qemu-vfio-apple"
+          test -x "$APP/Contents/MacOS/qemu-system-aarch64"
+          test -x "$APP/Contents/MacOS/qemu-img"
+          test "$(plutil -extract CFBundleDisplayName raw -o - "$APP/Contents/Info.plist")" = "vEGPU Machine"
+          test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "vEGPU Machine"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "${{ steps.version.outputs.marketing_version }}"
+          test "$(plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")" = "${{ steps.version.outputs.build_number }}"
+          test -f "$APP/Contents/Resources/manifest.json"
+          python3 - "$APP/Contents/Resources/manifest.json" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], "r", encoding="utf-8") as f:
+              manifest = json.load(f)
+          assert manifest["product"] == "vEGPU Machine"
+          assert manifest["version"]
+          assert manifest["build"]
+          assert manifest["distribution"]["format"] == "zip"
+          assert manifest["distribution"]["installPath"] == "/Applications/vEGPU Machine.app"
+          assert manifest["guestTools"]["driverVersion"]
+          dkms = manifest["guestTools"]["dkmsPackages"]
+          prebuilt = manifest["guestTools"]["prebuiltPackages"]
+          kernels = manifest["guestTools"]["kernels"]
+          assert len(dkms) == 1
+          assert prebuilt
+          assert kernels
+          assert len(prebuilt) == len(kernels)
+          for kernel in kernels:
+              assert len(kernel.get("prebuiltPackages", [])) == 1
+          PY
+          test -f "$APP/Contents/Resources/share/qemu/edk2-aarch64-code.fd"
+          test -f "$APP/Contents/Resources/share/qemu/edk2-arm-vars.fd"
+          test ! -d "$APP/Contents/MacOS/libexec"
+          test -f "$APP/Contents/Resources/share/qemu/efi-virtio.rom"
+          test ! -e "$APP/Contents/Resources/share/qemu/npcm7xx_bootrom.bin"
+          test ! -e "$APP/Contents/Resources/share/qemu/npcm8xx_bootrom.bin"
+          test ! -e "$APP/Contents/Resources/share/qemu/ast27x0_bootrom.bin"
+          printf '%s\n' \
+            edk2-aarch64-code.fd \
+            edk2-arm-vars.fd \
+            efi-virtio.rom \
+            > "$RUNNER_TEMP/expected-app-qemu-data.txt"
+          find "$APP/Contents/Resources/share/qemu" -type f | sed "s#^$APP/Contents/Resources/share/qemu/##" | sort > "$RUNNER_TEMP/actual-app-qemu-data.txt"
+          diff -u "$RUNNER_TEMP/expected-app-qemu-data.txt" "$RUNNER_TEMP/actual-app-qemu-data.txt"
+          test -f "$APP/Contents/Resources/guest-tools/manifest.json"
+          test ! -d "$APP/Contents/Resources/guest-tools/work"
+          find "$APP/Contents/Resources/guest-tools/packages" -type f -name 'apple-dma-*.deb' -print -quit | grep -q .
+          find "$APP/Contents/Resources/guest-tools/source" -type f -name 'apple-dma-*.tar.gz' -print -quit | grep -q .
+          test -f "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
+          test -f "$APP/Contents/Resources/ThirdPartyNotices/LICENSES"
+          test "$(find "$APP/Contents/Resources/ThirdPartyNotices" -maxdepth 1 -type f | wc -l | tr -d ' ')" = "2"
+          test ! -e "$APP/Contents/Resources/ThirdPartyNotices/license-files"
+          GENERATED_NOTICES="${{ steps.nosip.outputs.notices_dir }}"
+          test -d "$GENERATED_NOTICES/license-files"
+          test -f "$GENERATED_NOTICES/license-files/qemu/COPYING"
+          test ! -e "$GENERATED_NOTICES/license-files/qemu/$(printf 'pc-bios-%s' README)"
+          test -f "$GENERATED_NOTICES/license-files/apple-dma/GPL-2.0.txt"
+          test -f "$GENERATED_NOTICES/license-files/edk2/License.txt"
+          test -f "$GENERATED_NOTICES/license-files/libressl/COPYING"
+          test ! -e "$GENERATED_NOTICES/license-files/openssl"
+          test -f "$GENERATED_NOTICES/license-files/gstreamer/LICENSE"
+          test -f "$GENERATED_NOTICES/license-files/virglrenderer/COPYING"
+          test -f "$APP/Contents/MacOS/lib/libspice-server.1.dylib"
+          find "$APP/Contents/MacOS/lib" -maxdepth 1 -type f -name 'libssl*.dylib' -print -quit | grep -q .
+          find "$APP/Contents/MacOS/lib" -maxdepth 1 -type f -name 'libcrypto*.dylib' -print -quit | grep -q .
+          test -f "$APP/Contents/MacOS/lib/libssl.60.dylib"
+          test -f "$APP/Contents/MacOS/lib/libcrypto.57.dylib"
+          test ! -e "$APP/Contents/MacOS/lib/libssl.3.dylib"
+          test ! -e "$APP/Contents/MacOS/lib/libcrypto.3.dylib"
+          MACHINE_ANGLE_PAYLOADS="$(
+            find "$APP" \
+              \( \
+                -name 'EGL.framework' -o \
+                -name 'GLESv2.framework' -o \
+                -path '*/Source/ThirdParty/ANGLE*' -o \
+                -iname '*WebKit*' \
+              \) \
+              -print
+          )"
+          if [[ -n "$MACHINE_ANGLE_PAYLOADS" ]]; then
+            printf 'vEGPU Machine must not vendor app-side WebKit/ANGLE payloads:\n%s\n' "$MACHINE_ANGLE_PAYLOADS" >&2
+            exit 1
+          fi
+          otool -L "$APP/Contents/MacOS/lib"/*.dylib "$APP/Contents/MacOS/qemu-system-aarch64" "$APP/Contents/MacOS/qemu-img" > "$RUNNER_TEMP/app-runtime-links.txt"
+          python3 -c 'import sys; data=open(sys.argv[1], "rb").read(); assert b"/openssl@3/" not in data' "$RUNNER_TEMP/app-runtime-links.txt"
+          python3 -c 'import sys; data=open(sys.argv[1], "rb").read(); assert b"virtio-net-pci,netdev=net0,mac=de:ad:be:ef:10:01,host_mtu=1500,speed=40000,duplex=full" in data; assert b"romfile=,rombar=0" not in data' "$APP/Contents/MacOS/qemu-vfio-apple"
+          python3 -c 'import sys; data=open(sys.argv[1], "rb").read(); assert b"virtio-gpu-gl-pci" in data' "$APP/Contents/MacOS/qemu-vfio-apple"
+          grep -F 'Acknowledgements and Independence' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
+          grep -F 'https://github.com/scottjg/qemu-vfio-apple' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
+          grep -F 'https://github.com/utmapp/qemu' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
+          grep -F 'not endorsed by, sponsored by' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
+          FORBIDDEN_DOMAIN="$(printf '%s.%s' openresearch tools)"
+          BAD_NOTICE_RE='Release[-]specific[[:space:]]+reminder|Before[[:space:]]+publishing|Bundled[[:space:]]+artifacts[[:space:]]+seen|Runtime[[:space:]]+Notice[[:space:]]+Bundle|package[[:space:]]+metadata|source[[:space:]]+revision|/Users/[^[:space:]]+|/home/[^[:space:]]+'
+          ! grep -R -F "$FORBIDDEN_DOMAIN" "$APP/Contents/Resources/ThirdPartyNotices"
+          ! grep -R -E "$BAD_NOTICE_RE" "$APP/Contents/Resources/ThirdPartyNotices"
+          APP_STRINGS="$RUNNER_TEMP/vegpu-machine-strings.txt"
+          STRING_INPUTS=("$APP/Contents/MacOS/vEGPU Machine")
+          if [[ -f "$APP/Contents/MacOS/vEGPU Machine.debug.dylib" ]]; then
+            STRING_INPUTS+=("$APP/Contents/MacOS/vEGPU Machine.debug.dylib")
+          fi
+          strings "${STRING_INPUTS[@]}" > "$APP_STRINGS"
+          grep -F 'About vEGPU Machine' "$APP_STRINGS"
+          grep -F 'ThirdPartyNotices' "$APP_STRINGS"
+          grep -F 'Button("Notices")' contrib/apple-vfio/VFIOUserHostApp/VFIOUserHostAppApp.swift
+          grep -F 'Button("Licenses")' contrib/apple-vfio/VFIOUserHostApp/VFIOUserHostAppApp.swift
+          grep -F 'case .licenses: return "Licenses"' contrib/apple-vfio/VFIOUserHostApp/AboutNoticesView.swift
+          for bad_app_text in \
+            "$(printf 'Open %s Licenses' Source)" \
+            "$(printf '%s Changes' Source)" \
+            "$(printf 'Third-%s Notices' Party)" \
+            "$(printf 'Re%s' load)" \
+            "$(printf 'Located in /%s' Applications)" \
+            "$(printf 'External PCI tester mode is %s' allowed)"
+          do
+            ! grep -F "$bad_app_text" "$APP_STRINGS"
+          done
+          "$APP/Contents/MacOS/qemu-img" create -f qcow2 "$PROBE" 64M
+          touch "$RUNNER_TEMP/probe-seed.iso"
+          ANGLE_PROBE="$RUNNER_TEMP/app-frameworks"
+          mkdir -p "$ANGLE_PROBE/EGL.framework/Versions/Current" "$ANGLE_PROBE/GLESv2.framework/Versions/Current"
+          touch "$ANGLE_PROBE/EGL.framework/Versions/Current/EGL" "$ANGLE_PROBE/GLESv2.framework/Versions/Current/GLESv2"
+          "$APP/Contents/MacOS/qemu-vfio-apple" start \
+            --disk "$PROBE" \
+            --memory 512M \
+            --cpus 1 \
+            --headless \
+            --efi-vars "$RUNNER_TEMP/probe-headless-efi-vars.fd" \
+            --seed-iso "$RUNNER_TEMP/probe-seed.iso" \
+            --pidfile "$RUNNER_TEMP/probe-headless.pid" \
+            --serial-log "$RUNNER_TEMP/probe-headless.serial.log" \
+            --qemu-log "$RUNNER_TEMP/probe-headless.qemu.log" \
+            --dry-run \
+            --qmp "$RUNNER_TEMP/probe-qmp.sock" \
+            --vmnet-netdev vmnet-shared \
+            --vmnet-start-address 172.29.253.1 \
+            --vmnet-end-address 172.29.253.99 \
+            --vmnet-subnet-mask 255.255.255.0 \
+            | tee "$RUNNER_TEMP/qemu-vfio-apple-headless-dry-run.txt"
+          "$APP/Contents/MacOS/qemu-vfio-apple" start \
+            --disk "$PROBE" \
+            --memory 512M \
+            --cpus 1 \
+            --efi-vars "$RUNNER_TEMP/probe-gui-efi-vars.fd" \
+            --seed-iso "$RUNNER_TEMP/probe-seed.iso" \
+            --pidfile "$RUNNER_TEMP/probe-gui.pid" \
+            --serial-log "$RUNNER_TEMP/probe-gui.serial.log" \
+            --qemu-log "$RUNNER_TEMP/probe-gui.qemu.log" \
+            --spice-socket "$RUNNER_TEMP/probe.spice" \
+            --angle-framework-dir "$ANGLE_PROBE" \
+            --dry-run \
+            --qmp "$RUNNER_TEMP/probe-gui-qmp.sock" \
+            --vmnet-netdev vmnet-shared \
+            --vmnet-start-address 172.29.253.1 \
+            --vmnet-end-address 172.29.253.99 \
+            --vmnet-subnet-mask 255.255.255.0 \
+            2> "$RUNNER_TEMP/qemu-vfio-apple-gui-dry-run.err" \
+            | tee "$RUNNER_TEMP/qemu-vfio-apple-gui-dry-run.txt"
+          for dry_run in "$RUNNER_TEMP/qemu-vfio-apple-headless-dry-run.txt" "$RUNNER_TEMP/qemu-vfio-apple-gui-dry-run.txt"; do
+            grep -F -- '--disk' "$dry_run" && false || true
+            grep -F 'qemu-system-aarch64' "$dry_run"
+            grep -F "$PROBE" "$dry_run"
+            grep -F 'hvf,tso=on' "$dry_run"
+            grep -F 'memory-backend-ram,id=pc.ram,size=512M,prealloc=on,share=off' "$dry_run"
+            grep -F 'virt,highmem=on,memory-backend=pc.ram' "$dry_run"
+            grep -F 'id=seed0' "$dry_run"
+            grep -F 'vmnet-shared,id=net0' "$dry_run"
+            grep -F 'virtio-net-pci,netdev=net0' "$dry_run"
+            ! grep -F 'romfile=,rombar=0' "$dry_run"
+            grep -F 'vfio-apple-auto-pci' "$dry_run"
+          done
+          grep -F -- '-display' "$RUNNER_TEMP/qemu-vfio-apple-headless-dry-run.txt"
+          grep -F 'none' "$RUNNER_TEMP/qemu-vfio-apple-headless-dry-run.txt"
+          grep -F -- '-nographic' "$RUNNER_TEMP/qemu-vfio-apple-headless-dry-run.txt"
+          grep -F -- '-spice' "$RUNNER_TEMP/qemu-vfio-apple-gui-dry-run.txt"
+          grep -F "unix=on,addr=$RUNNER_TEMP/probe.spice" "$RUNNER_TEMP/qemu-vfio-apple-gui-dry-run.txt"
+          grep -F 'gl=on' "$RUNNER_TEMP/qemu-vfio-apple-gui-dry-run.txt"
+          grep -F "angle frameworks: $ANGLE_PROBE" "$RUNNER_TEMP/qemu-vfio-apple-gui-dry-run.err"
+          python3 - "$RUNNER_TEMP/qemu-vfio-apple-gui-dry-run.txt" <<'PY'
+          import shlex
+          import sys
+
+          text = open(sys.argv[1], encoding="utf-8").read().replace("\\\n", " ")
+          args = shlex.split(text)
+          gpu_args = [
+              arg
+              for index, arg in enumerate(args)
+              if index > 0 and args[index - 1] == "-device" and arg.startswith("virtio-gpu-gl-pci")
+          ]
+          assert gpu_args == ["virtio-gpu-gl-pci"]
+          PY
+          grep -F 'spicevmc,id=vdagent' "$RUNNER_TEMP/qemu-vfio-apple-gui-dry-run.txt"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign --verify --deep --strict --verbose=2 "$DEXT"
+
+      - name: Compute release artifact names
+        id: artifacts
+        run: |
+          APP="${{ steps.nosip.outputs.app }}"
+          VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")"
+          BUILD="$(plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")"
+          safe_name() {
+            printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '-'
+          }
+          VERSION_SAFE="$(safe_name "$VERSION")"
+          RELEASE_BASE="vEGPU-Machine-${VERSION_SAFE}"
+          SOURCE_BASE="vEGPU-Machine-${VERSION_SAFE}-source"
+          {
+            echo "release_base=$RELEASE_BASE"
+            echo "source_base=$SOURCE_BASE"
+            echo "zip=$RUNNER_TEMP/${RELEASE_BASE}.zip"
+            echo "source_tgz=$RUNNER_TEMP/${SOURCE_BASE}.tar.gz"
+            echo "source_dir=$RUNNER_TEMP/${SOURCE_BASE}"
+            echo "artifact_name=${RELEASE_BASE}-build-output"
+          } >> "$GITHUB_OUTPUT"
+          test "$VERSION" = "${{ steps.version.outputs.marketing_version }}"
+          test "$BUILD" = "${{ steps.version.outputs.build_number }}"
+          printf 'release base: %s\n' "$RELEASE_BASE"
+          printf 'source base: %s\n' "$SOURCE_BASE"
+
+      - name: Package artifact
+        run: |
+          APP="${{ steps.nosip.outputs.app }}"
+          PACKAGE="$RUNNER_TEMP/${{ steps.artifacts.outputs.release_base }}"
+          ZIP_PATH="${{ steps.artifacts.outputs.zip }}"
+          rm -rf "$PACKAGE"
+          mkdir -p "$PACKAGE"
+          ditto "$APP" "$PACKAGE/vEGPU Machine.app"
+          ditto -c -k "$PACKAGE" "$ZIP_PATH"
+          zipinfo -1 "$ZIP_PATH" | grep -Fx 'vEGPU Machine.app/Contents/MacOS/vEGPU Machine'
+          zipinfo -1 "$ZIP_PATH" | grep -Fx 'vEGPU Machine.app/Contents/Resources/ThirdPartyNotices/NOTICES'
+          zipinfo -1 "$ZIP_PATH" | grep -Fx 'vEGPU Machine.app/Contents/Resources/ThirdPartyNotices/LICENSES'
+          zipinfo -1 "$ZIP_PATH" | grep -Fx 'vEGPU Machine.app/Contents/Resources/manifest.json'
+          if zipinfo -1 "$ZIP_PATH" | grep -E '^THIRD_PARTY_NOTICES/'; then
+            echo "release zip must not ship a root-level THIRD_PARTY_NOTICES sidecar" >&2
+            exit 1
+          fi
+          if zipinfo -1 "$ZIP_PATH" | grep -E '^vEGPU Machine[.]app/Contents/Resources/ThirdPartyNotices/license-files/'; then
+            echo "release app must not ship raw notice-generator license-files" >&2
+            exit 1
+          fi
+
+      - name: Package source bundle
+        run: |
+          APP="${{ steps.nosip.outputs.app }}"
+          GENERATED_NOTICES="${{ steps.nosip.outputs.notices_dir }}"
+          SOURCE_BUNDLE="${{ steps.artifacts.outputs.source_dir }}"
+          SOURCE_INPUTS="$RUNNER_TEMP/vegpu-machine-source-inputs/third-party-sources"
+          BASE_QEMU_REV="ac0cc20ad2fe0b8df2e5d9458e90a095ac711ab1"
+          BASE_QEMU_ARCHIVE="qemu-${BASE_QEMU_REV}.tar.gz"
+          BASE_QEMU_URLS="
+          https://gitlab.com/qemu-project/qemu/-/archive/${BASE_QEMU_REV}/${BASE_QEMU_ARCHIVE}
+          https://github.com/qemu/qemu/archive/${BASE_QEMU_REV}.tar.gz
+          "
+          rm -rf "$SOURCE_BUNDLE"
+          mkdir -p "$SOURCE_BUNDLE/base" "$SOURCE_BUNDLE/qemu-subprojects"
+
+          fetched_base=0
+          for url in $BASE_QEMU_URLS; do
+            if curl --fail --location --retry 3 --connect-timeout 20 --max-time 300 \
+              --output "$SOURCE_BUNDLE/base/$BASE_QEMU_ARCHIVE" "$url"
+            then
+              printf '%s\n' "$url" > "$SOURCE_BUNDLE/base/SOURCE_URL"
+              fetched_base=1
+              break
+            fi
+          done
+          test "$fetched_base" = "1"
+          test -s "$SOURCE_BUNDLE/base/$BASE_QEMU_ARCHIVE"
+          (cd "$SOURCE_BUNDLE/base" && shasum -a 256 "$BASE_QEMU_ARCHIVE" > SHA256SUMS)
+
+          for subproject in \
+            berkeley-softfloat-3 \
+            berkeley-testfloat-3 \
+            dtc \
+            keycodemapdb
+          do
+            test -d "subprojects/$subproject"
+            tar -C subprojects \
+              --exclude '.git' \
+              --exclude '*/.git' \
+              --exclude 'build' \
+              --exclude '*/build' \
+              -cf - "$subproject" \
+              | tar -C "$SOURCE_BUNDLE/qemu-subprojects" -xf -
+            test -d "$SOURCE_BUNDLE/qemu-subprojects/$subproject"
+            test ! -d "$SOURCE_BUNDLE/qemu-subprojects/$subproject/.git"
+          done
+          ditto "$APP/Contents/Resources/ThirdPartyNotices" "$SOURCE_BUNDLE/THIRD_PARTY_NOTICES"
+          ditto "$GENERATED_NOTICES" "$SOURCE_BUNDLE/notice-generator-output"
+          cp "$APP/Contents/Resources/manifest.json" "$SOURCE_BUNDLE/APP_MANIFEST.json"
+          test -d "$SOURCE_INPUTS"
+          ditto "$SOURCE_INPUTS" "$SOURCE_BUNDLE/third-party-sources"
+          PATCH_STACK_DIR="${PATCH_STACK_DIR:-patch-stack}"
+          test -f "$PATCH_STACK_DIR/00-base/UTM_QEMU_VISUAL_RUNTIME.txt"
+          grep -F 'https://github.com/utmapp/qemu/tree/utm-edition' "$PATCH_STACK_DIR/00-base/UTM_QEMU_VISUAL_RUNTIME.txt"
+          grep -F 'utmapp_qemu_visual_runtime_license=QEMU GPL-2.0-or-later' "$PATCH_STACK_DIR/00-base/UTM_QEMU_VISUAL_RUNTIME.txt"
+          test -f "$PATCH_STACK_DIR/01-scottjg-qemu-vfio-apple-wip/0001-scottjg-qemu-vfio-apple-wip.patch"
+          test -f "$PATCH_STACK_DIR/02-utmapp-qemu-based-visual-runtime/0001-utmapp-qemu-based-visual-runtime.patch"
+          test -f "$PATCH_STACK_DIR/03-openresearchtools-vfiouserhostapp-core/0001-openresearchtools-vfiouserhostapp-core.patch"
+          ditto "$PATCH_STACK_DIR" "$SOURCE_BUNDLE/patch-stack"
+          find "$SOURCE_BUNDLE/patch-stack" -name '.DS_Store' -delete
+          cat > "$SOURCE_BUNDLE/README" <<EOF
+          vEGPU Machine Source Bundle
+          ===========================
+
+          This archive accompanies the matching vEGPU Machine macOS arm64 ad-hoc binary artifact produced by this workflow run.
+
+          Contents:
+
+          - base/: exact vanilla QEMU base source archive used by this patch stack.
+          - qemu-subprojects/: QEMU Meson subproject sources downloaded for this build.
+          - patch-stack/: ordered source patch files and patch-local binary assets referenced by THIRD_PARTY_NOTICES/NOTICES.
+          - third-party-sources/: upstream source archives and dependency recipe metadata fetched for bundled runtime dependencies, with SHA256SUMS.
+          - THIRD_PARTY_NOTICES/: copy of the two notice files embedded in the application.
+          - notice-generator-output/: raw generated notice inputs, including extracted upstream license files and SOURCE_INFO metadata used to assemble LICENSES.
+          - APP_MANIFEST.json: copy of the app-embedded release manifest used for update/install checks.
+
+          Reconstructing the patched source tree:
+
+          1. Unpack base/${BASE_QEMU_ARCHIVE}.
+          2. Copy qemu-subprojects/* into the unpacked tree's subprojects/ directory.
+          3. Apply the patch-stack patches in numeric order from the unpacked tree root.
+          4. Copy any patch-stack/*/assets/ contents into the unpacked tree root.
+          5. Use the checked-in workflow/scripts from the patched tree to rebuild the release.
+
+          Build metadata:
+
+          - App version: ${{ steps.version.outputs.marketing_version }} (${{ steps.version.outputs.build_number }})
+          - Artifact base: ${{ steps.artifacts.outputs.release_base }}
+          - Source base: ${{ steps.artifacts.outputs.source_base }}
+          - Repository: ${GITHUB_REPOSITORY}
+          - Ref: ${GITHUB_REF}
+          - Commit: ${GITHUB_SHA}
+          - Workflow: ${GITHUB_WORKFLOW}
+          - Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          The application bundle contains NOTICES and LICENSES. This source bundle is the release-side source package for the corresponding binary build without duplicating a second full patched tree.
+          EOF
+          test -f "$SOURCE_BUNDLE/base/$BASE_QEMU_ARCHIVE"
+          test -f "$SOURCE_BUNDLE/base/SHA256SUMS"
+          test -f "$SOURCE_BUNDLE/base/SOURCE_URL"
+          test -f "$SOURCE_BUNDLE/APP_MANIFEST.json"
+          test -d "$SOURCE_BUNDLE/qemu-subprojects/dtc"
+          test -f "$SOURCE_BUNDLE/THIRD_PARTY_NOTICES/NOTICES"
+          test -f "$SOURCE_BUNDLE/THIRD_PARTY_NOTICES/LICENSES"
+          test "$(find "$SOURCE_BUNDLE/THIRD_PARTY_NOTICES" -maxdepth 1 -type f | wc -l | tr -d ' ')" = "2"
+          test -f "$SOURCE_BUNDLE/notice-generator-output/NOTICES"
+          test -f "$SOURCE_BUNDLE/notice-generator-output/LICENSES"
+          test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/qemu/COPYING"
+          test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/apple-dma/GPL-2.0.txt"
+          test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/libressl/COPYING"
+          test ! -e "$SOURCE_BUNDLE/notice-generator-output/license-files/openssl"
+          test -f "$SOURCE_BUNDLE/third-party-sources/SHA256SUMS"
+          test -f "$SOURCE_BUNDLE/third-party-sources/edk2/SOURCE_RECIPE.txt"
+          test -f "$SOURCE_BUNDLE/third-party-sources/edk2/edk2-4dfdca63a93497203f197ec98ba20e2327e4afe4.tar.gz"
+          test -f "$SOURCE_BUNDLE/third-party-sources/libressl/SOURCE_RECIPE.txt"
+          test -f "$SOURCE_BUNDLE/third-party-sources/libressl/libressl-4.3.2.tar.gz"
+          test ! -e "$SOURCE_BUNDLE/third-party-sources/openssl"
+          test -f "$SOURCE_BUNDLE/third-party-sources/spice-protocol/SOURCE_RECIPE.txt"
+          test -f "$SOURCE_BUNDLE/third-party-sources/spice-protocol/spice-protocol-0.14.5.tar.xz"
+          test -f "$SOURCE_BUNDLE/third-party-sources/spice-server/SOURCE_RECIPE.txt"
+          test -f "$SOURCE_BUNDLE/third-party-sources/spice-server/spice-0.16.0.tar.bz2"
+          test -f "$SOURCE_BUNDLE/third-party-sources/virglrenderer/SOURCE_RECIPE.txt"
+          (cd "$SOURCE_BUNDLE/third-party-sources" && shasum -a 256 -c SHA256SUMS)
+          tar -C "$RUNNER_TEMP" -czf "${{ steps.artifacts.outputs.source_tgz }}" "$(basename "$SOURCE_BUNDLE")"
+
+      - name: Upload app
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.artifacts.outputs.artifact_name }}
+          path: |
+            ${{ steps.artifacts.outputs.zip }}
+            ${{ steps.artifacts.outputs.source_tgz }}
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: ${{ inputs.publish_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.marketing_version }}"
+          TAG="v${VERSION}"
+          TITLE="vEGPU Machine ${VERSION}"
+          PRERELEASE="${{ inputs.prerelease }}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            RELEASE_ID="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .id)"
+            gh api \
+              --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+              -f "name=${TITLE}" \
+              -F "prerelease=${PRERELEASE}" \
+              >/dev/null
+          else
+            release_args=(
+              --title "$TITLE"
+              --notes "vEGPU Machine ${VERSION}"
+            )
+            if [[ "$PRERELEASE" == "true" ]]; then
+              release_args+=(--prerelease)
+            fi
+            gh release create "$TAG" --target "$GITHUB_SHA" "${release_args[@]}"
+          fi
+
+          gh release upload "$TAG" \
+            "${{ steps.artifacts.outputs.zip }}" \
+            "${{ steps.artifacts.outputs.source_tgz }}" \
+            --clobber

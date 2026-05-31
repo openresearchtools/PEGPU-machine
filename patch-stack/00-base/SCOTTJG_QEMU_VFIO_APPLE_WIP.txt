@@ -1,0 +1,3 @@
+scottjg_qemu_vfio_apple_wip=41f61cecb5a371fb97dced5cd6970845e0c069cf
+scottjg_qemu_vfio_apple_wip_subject=Merge pull request #1 from MarkErik/patch-1
+scottjg_qemu_vfio_apple_wip_source=https://github.com/scottjg/qemu-vfio-apple/tree/wip
