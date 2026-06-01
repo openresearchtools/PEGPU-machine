@@ -1,4 +1,10 @@
+# macOS Finder metadata
 .DS_Store
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100/
+.Trashes/
 
 # Local scratch trees and build outputs
 qemu-source/

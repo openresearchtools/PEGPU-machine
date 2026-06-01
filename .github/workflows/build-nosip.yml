@@ -4,6 +4,26 @@
 name: Build vEGPU Machine no-SIP package
 
 on:
+  workflow_call:
+    inputs:
+      release_version:
+        description: "App version to write into CFBundleShortVersionString, for example 1.0.0"
+        required: false
+        type: string
+      build_number:
+        description: "Build number to write into CFBundleVersion. Defaults to the GitHub run number."
+        required: false
+        type: string
+      publish_release:
+        description: "Create/update a GitHub Release and upload the zip/source assets."
+        required: false
+        default: false
+        type: boolean
+      prerelease:
+        description: "Mark the GitHub Release as a pre-release when publishing."
+        required: false
+        default: true
+        type: boolean
   workflow_dispatch:
     inputs:
       release_version:
