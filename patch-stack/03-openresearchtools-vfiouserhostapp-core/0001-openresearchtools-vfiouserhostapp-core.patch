@@ -263,10 +263,10 @@ index 0000000000000000000000000000000000000000..7a48088fd8fd63764049b875bdbe955d
 +echo "Built guest driver bundle in $OUT_DIR"
 diff --git a/contrib/apple-dma/scripts/merge-guest-driver-bundles.sh b/contrib/apple-dma/scripts/merge-guest-driver-bundles.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..b23446ab9330416c1c758fdd94c302dcf79a49e1
+index 0000000000000000000000000000000000000000..95b41f24a427b88b247cb45beb9cfefbd70e4f80
 --- /dev/null
 +++ b/contrib/apple-dma/scripts/merge-guest-driver-bundles.sh
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,167 @@
 +#!/usr/bin/env bash
 +# Modified by OpenResearchTools, 2026-05-26.
 +# SPDX-License-Identifier: GPL-2.0-or-later
@@ -364,11 +364,15 @@ index 0000000000000000000000000000000000000000..b23446ab9330416c1c758fdd94c302dc
 +
 +    for part in inputs:
 +        if part.is_file():
++            add(part.parent)
 +            continue
 +        add(part)
++        add(part.parent)
 +        if part.is_dir():
 +            for child in sorted(part.iterdir()):
-+                if child.is_dir():
++                if child.is_file():
++                    add(child.parent)
++                elif child.is_dir():
 +                    add(child)
 +    return roots
 +
