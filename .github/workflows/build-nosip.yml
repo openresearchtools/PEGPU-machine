@@ -52,110 +52,19 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  debian-kernels:
-    name: Resolve Debian guest kernels
-    runs-on: ubuntu-24.04
-    outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
-
-    steps:
-      - name: Build kernel matrix
-        id: matrix
-        shell: bash
-        run: |
-          set -euo pipefail
-          work="$(mktemp -d)"
-          for url in \
-            https://deb.debian.org/debian/dists/trixie/main/binary-arm64/Packages.xz \
-            https://deb.debian.org/debian/dists/trixie-updates/main/binary-arm64/Packages.xz \
-            https://security.debian.org/debian-security/dists/trixie-security/main/binary-arm64/Packages.xz
-          do
-            curl --fail --location --silent --show-error "$url" | xz -dc >> "$work/Packages"
-            printf '\n' >> "$work/Packages"
-          done
-          python3 - "$work/Packages" "$GITHUB_OUTPUT" <<'PY'
-          import json
-          import re
-          import sys
-
-          packages_path, output_path = sys.argv[1], sys.argv[2]
-          text = open(packages_path, "r", encoding="utf-8", errors="replace").read()
-          packages = {}
-          for paragraph in text.split("\n\n"):
-              fields = {}
-              current = None
-              for line in paragraph.splitlines():
-                  if not line:
-                      continue
-                  if line.startswith(" ") and current:
-                      fields[current] += "\n" + line
-                      continue
-                  if ": " in line:
-                      current, value = line.split(": ", 1)
-                      fields[current] = value
-              package = fields.get("Package")
-              version = fields.get("Version")
-              if package and version:
-                  packages[package] = version
-
-          header_re = re.compile(r"^linux-headers-(6\.12\.(\d+)\+deb13(?:\+\d+)?-arm64)$")
-          image_id = "debian-13-generic-arm64-20260509-2473"
-          image_url = "https://cloud.debian.org/images/cloud/trixie/20260509-2473/debian-13-generic-arm64-20260509-2473.qcow2"
-          image_sha512 = "16edf9daf931f2038d9f6ed4ee3e66d6e40c0cd3826dda83563a48ef1d76cb11a51ea9094b1e727deb4ed1bd253a58bd3c135c5cc77468ff64c1029878bc32dc"
-          rows = []
-
-          for package, version in sorted(packages.items()):
-              match = header_re.match(package)
-              if not match:
-                  continue
-              abi, patchlevel = match.group(1), int(match.group(2))
-              if patchlevel < 86:
-                  continue
-              common = f"linux-headers-{abi.removesuffix('-arm64')}-common"
-              common_version = packages.get(common)
-              if common_version != version:
-                  raise SystemExit(f"{package}: missing matching common headers package {common}={version}")
-              rows.append({
-                  "kernel_abi": abi,
-                  "kernel_debian_version": version,
-                  "common_headers_package": common,
-                  "image_id": image_id,
-                  "image_url": image_url,
-                  "image_sha512": image_sha512,
-                  "safe_kernel": re.sub(r"[^0-9A-Za-z._-]+", "-", abi),
-              })
-
-          rows.sort(key=lambda row: [int(part) for part in row["kernel_abi"].split("+", 1)[0].split(".")])
-          if not rows:
-              raise SystemExit("no Debian arm64 kernel header rows found")
-
-          matrix = {"include": rows}
-          print(json.dumps(matrix, indent=2))
-          with open(output_path, "a", encoding="utf-8") as out:
-              out.write("matrix=" + json.dumps(matrix, separators=(",", ":")) + "\n")
-          PY
-
   guest-tools:
     name: Build Debian guest tools
     runs-on: ubuntu-24.04-arm
-    needs: debian-kernels
     defaults:
       run:
         shell: bash
         working-directory: qemu-source
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.debian-kernels.outputs.matrix) }}
 
     env:
-      KERNEL_ABI: ${{ matrix.kernel_abi }}
-      KERNEL_DEBIAN_VERSION: ${{ matrix.kernel_debian_version }}
-      COMMON_HEADERS_PACKAGE: ${{ matrix.common_headers_package }}
-      IMAGE_ID: ${{ matrix.image_id }}
-      DEBIAN_IMAGE_URL: ${{ matrix.image_url }}
-      DEBIAN_IMAGE_SHA512: ${{ matrix.image_sha512 }}
+      IMAGE_ID: debian-13-generic-arm64-20260509-2473
+      DEBIAN_IMAGE_URL: https://cloud.debian.org/images/cloud/trixie/20260509-2473/debian-13-generic-arm64-20260509-2473.qcow2
+      DEBIAN_IMAGE_SHA512: 16edf9daf931f2038d9f6ed4ee3e66d6e40c0cd3826dda83563a48ef1d76cb11a51ea9094b1e727deb4ed1bd253a58bd3c135c5cc77468ff64c1029878bc32dc
       DEBIAN_FRONTEND: noninteractive
-      REQUIRE_PREBUILT: "1"
 
     steps:
       - name: Checkout patch control branch
@@ -204,31 +113,14 @@ jobs:
           cp -R "$PATCH_STACK_DIR" patch-stack
           find patch-stack -name '.DS_Store' -delete
 
-      - name: Add Debian trixie repositories
+      - name: Install guest-tools packaging dependencies
         run: |
-          sudo install -d -m 0755 /etc/apt/keyrings
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends debian-archive-keyring
-          sudo cp /usr/share/keyrings/debian-archive-keyring.gpg /etc/apt/keyrings/debian-trixie.gpg
-          cat <<'EOF' | sudo tee /etc/apt/sources.list.d/debian-trixie.list
-          deb [arch=arm64 signed-by=/etc/apt/keyrings/debian-trixie.gpg] https://deb.debian.org/debian trixie main
-          deb [arch=arm64 signed-by=/etc/apt/keyrings/debian-trixie.gpg] https://deb.debian.org/debian trixie-updates main
-          deb [arch=arm64 signed-by=/etc/apt/keyrings/debian-trixie.gpg] https://security.debian.org/debian-security trixie-security main
-          EOF
-          sudo dpkg --add-architecture arm64
-          sudo apt-get update
-
-      - name: Install build dependencies and pinned Debian headers
-        run: |
           sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            dkms \
             dpkg-dev \
-            jq \
-            linux-headers-${KERNEL_ABI}=${KERNEL_DEBIAN_VERSION} \
-            ${COMMON_HEADERS_PACKAGE}=${KERNEL_DEBIAN_VERSION}
+            jq
 
-      - name: Build guest driver packages and manifest
+      - name: Build guest driver DKMS package and manifest
         run: contrib/apple-dma/scripts/build-guest-driver-bundle.sh
 
       - name: Validate guest tools
@@ -238,15 +130,20 @@ jobs:
           test -f artifacts/guest-tools/SHA512SUMS
           test ! -d artifacts/guest-tools/work
           jq -e '.driver.dkmsPackages | length == 1' artifacts/guest-tools/manifest.json
-          jq -e '.driver.prebuiltPackages | length == 1' artifacts/guest-tools/manifest.json
-          find artifacts/guest-tools/packages -type f -name 'apple-dma-*.deb' -print -quit | grep -q .
+          jq -e 'has("kernels") | not' artifacts/guest-tools/manifest.json
+          jq -e '.driver | has("prebuiltPackages") | not' artifacts/guest-tools/manifest.json
+          find artifacts/guest-tools/packages -type f -name 'apple-dma-dkms_*.deb' -print -quit | grep -q .
+          if find artifacts/guest-tools/packages -type f -name 'apple-dma-modules-*.deb' -print -quit | grep -q .; then
+            echo "guest tools must not contain kernel-versioned DMA module packages" >&2
+            exit 1
+          fi
           find artifacts/guest-tools/source -type f -name 'apple-dma-*.tar.gz' -print -quit | grep -q .
           sha512sum -c artifacts/guest-tools/SHA512SUMS
 
       - name: Upload guest tools
         uses: actions/upload-artifact@v7
         with:
-          name: vegpu-guest-driver-debian13-arm64-${{ matrix.safe_kernel }}
+          name: vegpu-guest-driver-debian13-arm64-dkms
           path: qemu-source/artifacts/guest-tools
           if-no-files-found: error
 
@@ -648,14 +545,10 @@ jobs:
               manifest = json.load(f)
           assert manifest["manifestVersion"] == 2
           dkms = manifest["driver"]["dkmsPackages"]
-          prebuilt = manifest["driver"]["prebuiltPackages"]
-          kernels = manifest["kernels"]
           assert len(dkms) == 1
-          assert prebuilt
-          assert kernels
-          assert len(prebuilt) == len(kernels)
-          for kernel in kernels:
-              assert len(kernel.get("prebuiltPackages", [])) == 1
+          assert "prebuiltPackages" not in manifest["driver"]
+          assert "kernel" not in manifest
+          assert "kernels" not in manifest
           PY
           (cd artifacts/guest-tools && shasum -a 512 -c SHA512SUMS)
 
@@ -741,14 +634,9 @@ jobs:
           assert manifest["distribution"]["installPath"] == "/Applications/vEGPU Machine.app"
           assert manifest["guestTools"]["driverVersion"]
           dkms = manifest["guestTools"]["dkmsPackages"]
-          prebuilt = manifest["guestTools"]["prebuiltPackages"]
-          kernels = manifest["guestTools"]["kernels"]
           assert len(dkms) == 1
-          assert prebuilt
-          assert kernels
-          assert len(prebuilt) == len(kernels)
-          for kernel in kernels:
-              assert len(kernel.get("prebuiltPackages", [])) == 1
+          assert "prebuiltPackages" not in manifest["guestTools"]
+          assert "kernels" not in manifest["guestTools"]
           PY
           test -f "$APP/Contents/Resources/share/qemu/edk2-aarch64-code.fd"
           test -f "$APP/Contents/Resources/share/qemu/edk2-arm-vars.fd"
@@ -766,7 +654,11 @@ jobs:
           diff -u "$RUNNER_TEMP/expected-app-qemu-data.txt" "$RUNNER_TEMP/actual-app-qemu-data.txt"
           test -f "$APP/Contents/Resources/guest-tools/manifest.json"
           test ! -d "$APP/Contents/Resources/guest-tools/work"
-          find "$APP/Contents/Resources/guest-tools/packages" -type f -name 'apple-dma-*.deb' -print -quit | grep -q .
+          find "$APP/Contents/Resources/guest-tools/packages" -type f -name 'apple-dma-dkms_*.deb' -print -quit | grep -q .
+          if find "$APP/Contents/Resources/guest-tools/packages" -type f -name 'apple-dma-modules-*.deb' -print -quit | grep -q .; then
+            echo "Machine app must not bundle kernel-versioned apple DMA module packages" >&2
+            exit 1
+          fi
           find "$APP/Contents/Resources/guest-tools/source" -type f -name 'apple-dma-*.tar.gz' -print -quit | grep -q .
           test -f "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
           test -f "$APP/Contents/Resources/ThirdPartyNotices/LICENSES"

@@ -70,19 +70,15 @@ index 0000000000000000000000000000000000000000..84488eb9e83bff4cf64e7dfecbd81f7e
 +BUNDLE_ROOT="$WORK_DIR/bundle-root"
 +PKG_DIR="$WORK_DIR/packages"
 +
-+KERNEL_ABI="${KERNEL_ABI:-6.12.86+deb13-arm64}"
-+KERNEL_DEBIAN_VERSION="${KERNEL_DEBIAN_VERSION:-6.12.86-1}"
 +IMAGE_ID="${IMAGE_ID:-debian-13-generic-arm64-20260509-2473}"
 +DEBIAN_IMAGE_URL="${DEBIAN_IMAGE_URL:-https://cloud.debian.org/images/cloud/trixie/20260509-2473/debian-13-generic-arm64-20260509-2473.qcow2}"
 +DEBIAN_IMAGE_SHA512="${DEBIAN_IMAGE_SHA512:-16edf9daf931f2038d9f6ed4ee3e66d6e40c0cd3826dda83563a48ef1d76cb11a51ea9094b1e727deb4ed1bd253a58bd3c135c5cc77468ff64c1029878bc32dc}"
 +NVIDIA_REPO="${NVIDIA_REPO:-https://developer.download.nvidia.com/compute/cuda/repos/debian13/sbsa}"
-+REQUIRE_PREBUILT="${REQUIRE_PREBUILT:-0}"
 +SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1767225600}"
 +export SOURCE_DATE_EPOCH
 +
 +DRIVER_VERSION="$(awk -F'"' '/PACKAGE_VERSION/{print $2; exit}' "$DRIVER_SRC/dkms.conf")"
 +PKG_VERSION="${DRIVER_VERSION}-1"
-+SAFE_KERNEL_ABI="${KERNEL_ABI//+/-}"
 +
 +for tool in dpkg-deb jq sha512sum tar; do
 +  if ! command -v "$tool" >/dev/null 2>&1; then
@@ -190,91 +186,18 @@ index 0000000000000000000000000000000000000000..84488eb9e83bff4cf64e7dfecbd81f7e
 +  printf '%s\n' "$package"
 +}
 +
-+build_prebuilt_package() {
-+  local headers="/lib/modules/$KERNEL_ABI/build"
-+  local package="$PKG_DIR/apple-dma-modules-${SAFE_KERNEL_ABI}_${PKG_VERSION}_arm64.deb"
-+  local module_dir="$WORK_DIR/module-build"
-+  local root="$WORK_DIR/apple-dma-modules"
-+
-+  if [ ! -d "$headers" ]; then
-+    if [ "$REQUIRE_PREBUILT" = "1" ]; then
-+      echo "error: missing kernel headers at $headers" >&2
-+      exit 1
-+    fi
-+    return 0
-+  fi
-+
-+  copy_driver_source "$module_dir"
-+  make -C "$headers" M="$module_dir" ARCH=arm64 CROSS_COMPILE="${CROSS_COMPILE:-}" modules >&2
-+
-+  mkdir -p "$root/DEBIAN" "$root/lib/modules/$KERNEL_ABI/extra" "$root/etc/modprobe.d" "$root/etc/modules-load.d"
-+  install -m 0644 "$module_dir/apple_dma.ko" "$root/lib/modules/$KERNEL_ABI/extra/apple_dma.ko"
-+  install -m 0644 "$DRIVER_SRC/apple-dma-options.conf" "$root/etc/modprobe.d/apple-dma-options.conf"
-+  install -m 0644 "$DRIVER_SRC/apple-dma-load.conf" "$root/etc/modules-load.d/apple-dma-load.conf"
-+
-+  cat >"$root/DEBIAN/control" <<EOF
-+Package: apple-dma-modules-$SAFE_KERNEL_ABI
-+Version: $PKG_VERSION
-+Section: kernel
-+Priority: optional
-+Architecture: arm64
-+Depends: kmod
-+Maintainer: openresearchtools <no-reply@openresearchtools.com>
-+Description: vEGPU guest DMA companion module for $KERNEL_ABI
-+ Prebuilt apple_dma.ko for Debian kernel $KERNEL_ABI
-+ from the pinned $IMAGE_ID cloud image.
-+EOF
-+
-+  cat >"$root/DEBIAN/postinst" <<EOF
-+#!/bin/sh
-+set -e
-+depmod "$KERNEL_ABI" || true
-+if command -v update-initramfs >/dev/null 2>&1; then
-+  update-initramfs -u -k "$KERNEL_ABI" || true
-+fi
-+if [ "\$(uname -r)" = "$KERNEL_ABI" ]; then
-+  modprobe apple_dma >/dev/null 2>&1 || true
-+fi
-+exit 0
-+EOF
-+
-+  cat >"$root/DEBIAN/prerm" <<EOF
-+#!/bin/sh
-+set -e
-+if [ "\$(uname -r)" = "$KERNEL_ABI" ]; then
-+  rmmod apple_dma >/dev/null 2>&1 || true
-+fi
-+exit 0
-+EOF
-+
-+  chmod 0755 "$root/DEBIAN/postinst" "$root/DEBIAN/prerm"
-+  normalize_tree_mtime "$root"
-+  dpkg-deb --build --root-owner-group "$root" "$package" >&2
-+  printf '%s\n' "$package"
-+}
-+
 +build_manifest() {
 +  local dkms_package="$1"
-+  local prebuilt_package="$2"
 +  local dkms_json
-+  local prebuilt_json
 +
 +  dkms_json="$(package_entry_json "$dkms_package" | jq -s '.')"
-+  if [ -n "$prebuilt_package" ] && [ -f "$prebuilt_package" ]; then
-+    prebuilt_json="$(package_entry_json "$prebuilt_package" | jq -s '.')"
-+  else
-+    prebuilt_json="[]"
-+  fi
 +
 +  jq -n \
 +    --arg id "$IMAGE_ID" \
 +    --arg imageUrl "$DEBIAN_IMAGE_URL" \
 +    --arg imageSha "$DEBIAN_IMAGE_SHA512" \
-+    --arg kernel "$KERNEL_ABI" \
-+    --arg kernelPackageVersion "$KERNEL_DEBIAN_VERSION" \
 +    --arg driverVersion "$DRIVER_VERSION" \
 +    --arg nvidiaRepo "$NVIDIA_REPO" \
-+    --argjson prebuilt "$prebuilt_json" \
 +    --argjson dkms "$dkms_json" \
 +    '{
 +      manifestVersion: 1,
@@ -287,22 +210,9 @@ index 0000000000000000000000000000000000000000..84488eb9e83bff4cf64e7dfecbd81f7e
 +        size: "408M",
 +        variant: "generic"
 +      },
-+      kernel: {
-+        version: $kernel,
-+        debianPackageVersion: $kernelPackageVersion,
-+        packages: []
-+      },
-+      kernels: [
-+        {
-+          version: $kernel,
-+          debianPackageVersion: $kernelPackageVersion,
-+          prebuiltPackages: $prebuilt
-+        }
-+      ],
 +      driver: {
 +        version: $driverVersion,
 +        moduleName: "apple_dma",
-+        prebuiltPackages: $prebuilt,
 +        dkmsPackages: $dkms
 +      },
 +      nvidia: {
@@ -320,15 +230,8 @@ index 0000000000000000000000000000000000000000..84488eb9e83bff4cf64e7dfecbd81f7e
 +}
 +
 +DKMS_PACKAGE="$(build_dkms_package)"
-+PREBUILT_PACKAGE="$(build_prebuilt_package || true)"
 +
 +cp "$DKMS_PACKAGE" "$BUNDLE_ROOT/packages/"
-+if [ -n "$PREBUILT_PACKAGE" ] && [ -f "$PREBUILT_PACKAGE" ]; then
-+  cp "$PREBUILT_PACKAGE" "$BUNDLE_ROOT/packages/"
-+elif [ "$REQUIRE_PREBUILT" = "1" ]; then
-+  echo "error: prebuilt module package was not produced" >&2
-+  exit 1
-+fi
 +
 +SOURCE_COPY="$WORK_DIR/source-copy"
 +copy_driver_source "$SOURCE_COPY"
@@ -338,17 +241,16 @@ index 0000000000000000000000000000000000000000..84488eb9e83bff4cf64e7dfecbd81f7e
 +cat >"$BUNDLE_ROOT/README.txt" <<EOF
 +vEGPU guest tools for $IMAGE_ID
 +
-+This bundle contains the guest-side DMA driver package for the pinned Debian
-+cloud image. vEGPU syncs this manifest and these packages over SSH after
++This bundle contains the guest-side apple_dma DKMS source package. vEGPU
++syncs this manifest and package over SSH after
 +the cloud-init seed brings up the base VM; this artifact does not contain
 +a modified Debian image.
 +
-+Kernel: $KERNEL_ABI ($KERNEL_DEBIAN_VERSION)
 +Driver: apple_dma $DRIVER_VERSION
 +NVIDIA/CUDA repo: $NVIDIA_REPO
 +EOF
 +
-+build_manifest "$DKMS_PACKAGE" "$PREBUILT_PACKAGE"
++build_manifest "$DKMS_PACKAGE"
 +cp "$BUNDLE_ROOT/manifest.json" "$OUT_DIR/manifest.json"
 +rm -rf "$OUT_DIR/packages" "$OUT_DIR/source"
 +cp -R "$BUNDLE_ROOT/packages" "$OUT_DIR/packages"
@@ -464,44 +366,21 @@ index 0000000000000000000000000000000000000000..e174bbefc42466fa1895da6f2176448c
 +
 +base = manifests[0]
 +dkms_packages = []
-+prebuilt_packages = []
-+kernels = []
-+seen_kernels = set()
 +
 +for manifest in manifests:
 +    driver = manifest.get("driver", {})
 +    dkms_packages.extend(driver.get("dkmsPackages", []))
-+    prebuilt = driver.get("prebuiltPackages", [])
-+    prebuilt_packages.extend(prebuilt)
-+
-+    manifest_kernels = manifest.get("kernels")
-+    if not manifest_kernels and manifest.get("kernel"):
-+        kernel = dict(manifest["kernel"])
-+        kernel["prebuiltPackages"] = prebuilt
-+        manifest_kernels = [kernel]
-+
-+    for kernel in manifest_kernels or []:
-+        version = kernel.get("version")
-+        if not version or version in seen_kernels:
-+            continue
-+        seen_kernels.add(version)
-+        kernels.append(kernel)
 +
 +dkms_packages = unique_entries(dkms_packages)
-+prebuilt_packages = unique_entries(prebuilt_packages)
-+kernels = sorted(kernels, key=lambda k: k.get("version", ""))
 +
 +driver = dict(base.get("driver", {}))
 +driver["dkmsPackages"] = dkms_packages
-+driver["prebuiltPackages"] = prebuilt_packages
 +
 +merged = {
 +    "manifestVersion": 2,
 +    "id": base.get("id"),
 +    "createdBy": "vEGPU GitHub Actions guest-tools merge workflow",
 +    "debian": base.get("debian", {}),
-+    "kernel": kernels[0] if kernels else base.get("kernel", {}),
-+    "kernels": kernels,
 +    "driver": driver,
 +    "nvidia": base.get("nvidia", {}),
 +    "guestPackages": base.get("guestPackages", []),
@@ -515,9 +394,8 @@ index 0000000000000000000000000000000000000000..e174bbefc42466fa1895da6f2176448c
 +cat >"$OUT_DIR/README.txt" <<'EOF'
 +vEGPU guest tools
 +
-+This directory contains the guest-side apple_dma DKMS source package,
-+prebuilt apple_dma module packages for the Debian kernels listed in
-+manifest.json, and the guest-driver source archive.
++This directory contains the guest-side apple_dma DKMS source package and the
++guest-driver source archive.
 +EOF
 +
 +tar -C "$OUT_DIR" -czf "$OUT_DIR/vegpu-guest-driver-bundle.tar.gz" \
@@ -4755,11 +4633,6 @@ index 0000000000000000000000000000000000000000..8fad4a46992b2e6712e47921286a9834
 +        release_tag = ""
 +
 +driver = guest_manifest.get("driver", {})
-+kernels = guest_manifest.get("kernels")
-+if not kernels and guest_manifest.get("kernel"):
-+    kernel = dict(guest_manifest["kernel"])
-+    kernel["prebuiltPackages"] = driver.get("prebuiltPackages", [])
-+    kernels = [kernel]
 +
 +manifest = {
 +    "manifestVersion": 1,
@@ -4783,8 +4656,6 @@ index 0000000000000000000000000000000000000000..8fad4a46992b2e6712e47921286a9834
 +        "driverVersion": driver.get("version", ""),
 +        "moduleName": driver.get("moduleName", "apple_dma"),
 +        "dkmsPackages": driver.get("dkmsPackages", []),
-+        "prebuiltPackages": driver.get("prebuiltPackages", []),
-+        "kernels": kernels or [],
 +    },
 +}
 +
