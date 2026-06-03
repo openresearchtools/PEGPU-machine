@@ -252,7 +252,7 @@ jobs:
 
   qemu-runtime:
     name: Build macOS QEMU runtime
-    runs-on: macos-15
+    runs-on: macos-26
     defaults:
       run:
         shell: bash
@@ -340,7 +340,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cache/vegpu/qemu-display-deps
-          key: ${{ runner.os }}-nosip-display-deps-opengl-virgl-${{ hashFiles('patch-control/patch-stack/**') }}
+          key: macos26-arm64-nosip-display-deps-opengl-virgl-v2-${{ hashFiles('patch-control/patch-stack/**') }}
 
       - name: Build display dependencies
         id: display-deps
@@ -411,10 +411,10 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/Library/Caches/ccache
-          key: ${{ runner.os }}-nosip-qemu-ccache-${{ github.ref_name }}-${{ github.sha }}
+          key: macos26-arm64-nosip-qemu-ccache-${{ github.ref_name }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-nosip-qemu-ccache-${{ github.ref_name }}-
-            ${{ runner.os }}-nosip-qemu-ccache-
+            macos26-arm64-nosip-qemu-ccache-${{ github.ref_name }}-
+            macos26-arm64-nosip-qemu-ccache-
 
       - name: Configure QEMU
         run: |
@@ -525,7 +525,7 @@ jobs:
 
   build:
     name: Package and ad-hoc sign
-    runs-on: macos-15
+    runs-on: macos-26
     needs:
       - guest-tools
       - qemu-runtime
