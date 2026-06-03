@@ -50,367 +50,6 @@ index 154f3308ef21c3e4c10423100e3a4115248b4948..6bb3d0e0abf7497bfc22ff390d905811
 +    <true/>
  </dict>
  </plist>
-diff --git a/contrib/apple-dma/scripts/build-guest-driver-bundle.sh b/contrib/apple-dma/scripts/build-guest-driver-bundle.sh
-new file mode 100755
-index 0000000000000000000000000000000000000000..84488eb9e83bff4cf64e7dfecbd81f7e26132a24
---- /dev/null
-+++ b/contrib/apple-dma/scripts/build-guest-driver-bundle.sh
-@@ -0,0 +1,303 @@
-+#!/usr/bin/env bash
-+# Modified by OpenResearchTools, 2026-05-26.
-+# SPDX-License-Identifier: GPL-2.0-or-later
-+set -euo pipefail
-+
-+HERE="$(cd "$(dirname "$0")" && pwd)"
-+REPO_ROOT="$(cd "$HERE/../../.." && pwd)"
-+DRIVER_SRC="$REPO_ROOT/contrib/apple-dma/linux"
-+
-+OUT_DIR="${OUT_DIR:-$REPO_ROOT/artifacts/guest-tools}"
-+WORK_DIR="${WORK_DIR:-$REPO_ROOT/build/guest-tools-work}"
-+BUNDLE_ROOT="$WORK_DIR/bundle-root"
-+PKG_DIR="$WORK_DIR/packages"
-+
-+IMAGE_ID="${IMAGE_ID:-debian-13-generic-arm64-20260509-2473}"
-+DEBIAN_IMAGE_URL="${DEBIAN_IMAGE_URL:-https://cloud.debian.org/images/cloud/trixie/20260509-2473/debian-13-generic-arm64-20260509-2473.qcow2}"
-+DEBIAN_IMAGE_SHA512="${DEBIAN_IMAGE_SHA512:-16edf9daf931f2038d9f6ed4ee3e66d6e40c0cd3826dda83563a48ef1d76cb11a51ea9094b1e727deb4ed1bd253a58bd3c135c5cc77468ff64c1029878bc32dc}"
-+NVIDIA_REPO="${NVIDIA_REPO:-https://developer.download.nvidia.com/compute/cuda/repos/debian13/sbsa}"
-+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1767225600}"
-+export SOURCE_DATE_EPOCH
-+
-+DRIVER_VERSION="$(awk -F'"' '/PACKAGE_VERSION/{print $2; exit}' "$DRIVER_SRC/dkms.conf")"
-+PKG_VERSION="${DRIVER_VERSION}-1"
-+
-+for tool in dpkg-deb jq sha512sum tar; do
-+  if ! command -v "$tool" >/dev/null 2>&1; then
-+    echo "error: required tool not found: $tool" >&2
-+    exit 1
-+  fi
-+done
-+
-+rm -rf "$WORK_DIR" "$OUT_DIR/work"
-+mkdir -p "$OUT_DIR" "$PKG_DIR" "$BUNDLE_ROOT/packages" "$BUNDLE_ROOT/source"
-+
-+copy_driver_source() {
-+  local dest="$1"
-+  mkdir -p "$dest"
-+  tar -C "$DRIVER_SRC" \
-+    --exclude='.git' \
-+    --exclude='*.ko' \
-+    --exclude='*.o' \
-+    --exclude='*.mod' \
-+    --exclude='*.mod.c' \
-+    --exclude='*.cmd' \
-+    --exclude='.tmp_versions' \
-+    --exclude='Module.symvers' \
-+    --exclude='modules.order' \
-+    -cf - . | tar -C "$dest" -xf -
-+}
-+
-+sha512_file() {
-+  sha512sum "$1" | awk '{print $1}'
-+}
-+
-+normalize_tree_mtime() {
-+  local root="$1"
-+  find "$root" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
-+}
-+
-+create_reproducible_tar_gz() {
-+  local src_dir="$1"
-+  local output="$2"
-+  tar -C "$src_dir" \
-+    --sort=name \
-+    --mtime="@$SOURCE_DATE_EPOCH" \
-+    --owner=0 \
-+    --group=0 \
-+    --numeric-owner \
-+    --use-compress-program='gzip -n' \
-+    -cf "$output" .
-+}
-+
-+package_entry_json() {
-+  local file="$1"
-+  local rel="packages/$(basename "$file")"
-+  local sha
-+  sha="$(sha512_file "$file")"
-+  jq -n --arg path "$rel" --arg sha512 "$sha" '{path:$path, sha512:$sha512}'
-+}
-+
-+build_dkms_package() {
-+  local root="$WORK_DIR/apple-dma-dkms"
-+  local package="$PKG_DIR/apple-dma-dkms_${PKG_VERSION}_all.deb"
-+
-+  mkdir -p "$root/DEBIAN" "$root/usr/src/apple-dma-$DRIVER_VERSION"
-+  copy_driver_source "$root/usr/src/apple-dma-$DRIVER_VERSION"
-+
-+  cat >"$root/DEBIAN/control" <<EOF
-+Package: apple-dma-dkms
-+Version: $PKG_VERSION
-+Section: kernel
-+Priority: optional
-+Architecture: all
-+Depends: dkms, build-essential, kmod
-+Maintainer: openresearchtools <no-reply@openresearchtools.com>
-+Description: vEGPU guest DMA companion driver source
-+ DKMS package for the guest-side apple_dma module used with the
-+ vfio-apple QEMU passthrough device.
-+EOF
-+
-+  cat >"$root/DEBIAN/postinst" <<EOF
-+#!/bin/sh
-+set -e
-+if command -v dkms >/dev/null 2>&1; then
-+  dkms remove -m apple-dma -v "$DRIVER_VERSION" --all >/dev/null 2>&1 || true
-+  dkms add -m apple-dma -v "$DRIVER_VERSION" || true
-+  dkms autoinstall -m apple-dma -v "$DRIVER_VERSION" || true
-+fi
-+if command -v update-initramfs >/dev/null 2>&1; then
-+  update-initramfs -u || true
-+fi
-+modprobe apple_dma >/dev/null 2>&1 || true
-+exit 0
-+EOF
-+
-+  cat >"$root/DEBIAN/prerm" <<EOF
-+#!/bin/sh
-+set -e
-+if command -v dkms >/dev/null 2>&1; then
-+  dkms remove -m apple-dma -v "$DRIVER_VERSION" --all >/dev/null 2>&1 || true
-+fi
-+exit 0
-+EOF
-+
-+  chmod 0755 "$root/DEBIAN/postinst" "$root/DEBIAN/prerm"
-+  normalize_tree_mtime "$root"
-+  dpkg-deb --build --root-owner-group "$root" "$package" >&2
-+  printf '%s\n' "$package"
-+}
-+
-+build_manifest() {
-+  local dkms_package="$1"
-+  local dkms_json
-+
-+  dkms_json="$(package_entry_json "$dkms_package" | jq -s '.')"
-+
-+  jq -n \
-+    --arg id "$IMAGE_ID" \
-+    --arg imageUrl "$DEBIAN_IMAGE_URL" \
-+    --arg imageSha "$DEBIAN_IMAGE_SHA512" \
-+    --arg driverVersion "$DRIVER_VERSION" \
-+    --arg nvidiaRepo "$NVIDIA_REPO" \
-+    --argjson dkms "$dkms_json" \
-+    '{
-+      manifestVersion: 1,
-+      id: $id,
-+      createdBy: "vEGPU GitHub Actions guest-tools workflow",
-+      debian: {
-+        name: ($id + ".qcow2"),
-+        url: $imageUrl,
-+        sha512: $imageSha,
-+        size: "408M",
-+        variant: "generic"
-+      },
-+      driver: {
-+        version: $driverVersion,
-+        moduleName: "apple_dma",
-+        dkmsPackages: $dkms
-+      },
-+      nvidia: {
-+        repository: $nvidiaRepo,
-+        branch: "595",
-+        cudaMajor: "13",
-+        recommendedPackages: [
-+          "nvidia-driver=595*",
-+          "nvidia-open=595*",
-+          "cuda-toolkit-13"
-+        ]
-+      },
-+      guestPackages: []
-+    }' >"$BUNDLE_ROOT/manifest.json"
-+}
-+
-+DKMS_PACKAGE="$(build_dkms_package)"
-+
-+cp "$DKMS_PACKAGE" "$BUNDLE_ROOT/packages/"
-+
-+SOURCE_COPY="$WORK_DIR/source-copy"
-+copy_driver_source "$SOURCE_COPY"
-+normalize_tree_mtime "$SOURCE_COPY"
-+create_reproducible_tar_gz "$SOURCE_COPY" "$BUNDLE_ROOT/source/apple-dma-$DRIVER_VERSION.tar.gz"
-+
-+cat >"$BUNDLE_ROOT/README.txt" <<EOF
-+vEGPU guest tools for $IMAGE_ID
-+
-+This bundle contains the guest-side apple_dma DKMS source package. vEGPU
-+syncs this manifest and package over SSH after
-+the cloud-init seed brings up the base VM; this artifact does not contain
-+a modified Debian image.
-+
-+Driver: apple_dma $DRIVER_VERSION
-+NVIDIA/CUDA repo: $NVIDIA_REPO
-+EOF
-+
-+build_manifest "$DKMS_PACKAGE"
-+cp "$BUNDLE_ROOT/manifest.json" "$OUT_DIR/manifest.json"
-+rm -rf "$OUT_DIR/packages" "$OUT_DIR/source"
-+cp -R "$BUNDLE_ROOT/packages" "$OUT_DIR/packages"
-+cp -R "$BUNDLE_ROOT/source" "$OUT_DIR/source"
-+
-+create_reproducible_tar_gz "$BUNDLE_ROOT" "$OUT_DIR/vegpu-guest-driver-bundle.tar.gz"
-+sha512sum "$OUT_DIR"/vegpu-guest-driver-bundle.tar.gz "$OUT_DIR"/manifest.json >"$OUT_DIR/SHA512SUMS"
-+rm -rf "$WORK_DIR"
-+
-+echo "Built guest driver bundle in $OUT_DIR"
-diff --git a/contrib/apple-dma/scripts/merge-guest-driver-bundles.sh b/contrib/apple-dma/scripts/merge-guest-driver-bundles.sh
-new file mode 100755
-index 0000000000000000000000000000000000000000..e174bbefc42466fa1895da6f2176448ce3d09c0d
---- /dev/null
-+++ b/contrib/apple-dma/scripts/merge-guest-driver-bundles.sh
-@@ -0,0 +1,168 @@
-+#!/usr/bin/env bash
-+# Modified by OpenResearchTools, 2026-05-26.
-+# SPDX-License-Identifier: GPL-2.0-or-later
-+set -euo pipefail
-+
-+if [ "$#" -lt 2 ]; then
-+  echo "usage: $0 OUT_DIR GUEST_TOOLS_PART..." >&2
-+  exit 2
-+fi
-+
-+OUT_DIR="$1"
-+shift
-+
-+for tool in python3 shasum tar; do
-+  if ! command -v "$tool" >/dev/null 2>&1; then
-+    echo "error: required tool not found: $tool" >&2
-+    exit 1
-+  fi
-+done
-+
-+rm -rf "$OUT_DIR"
-+mkdir -p "$OUT_DIR/packages" "$OUT_DIR/source"
-+
-+python3 - "$OUT_DIR" "$@" <<'PY'
-+import hashlib
-+import json
-+import os
-+import shutil
-+import sys
-+from pathlib import Path
-+
-+out = Path(sys.argv[1])
-+parts = [Path(p) for p in sys.argv[2:]]
-+manifests = []
-+
-+def sha512(path: Path) -> str:
-+    h = hashlib.sha512()
-+    with path.open("rb") as f:
-+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-+            h.update(chunk)
-+    return h.hexdigest()
-+
-+def copy_tree_files(src_dir: Path, dst_dir: Path) -> None:
-+    if not src_dir.is_dir():
-+        return
-+    for src in sorted(p for p in src_dir.rglob("*") if p.is_file()):
-+        rel = src.relative_to(src_dir)
-+        dst = dst_dir / rel
-+        dst.parent.mkdir(parents=True, exist_ok=True)
-+        if dst.exists():
-+            if sha512(src) != sha512(dst):
-+                if is_shared_generated_artifact(rel):
-+                    print(f"reusing first generated guest-tools artifact: {rel}", file=sys.stderr)
-+                    continue
-+                raise SystemExit(f"conflicting guest-tools file: {rel}")
-+            continue
-+        shutil.copy2(src, dst)
-+
-+def is_shared_generated_artifact(rel: Path) -> bool:
-+    rel_text = rel.as_posix()
-+    return (
-+        rel_text.startswith("packages/apple-dma-dkms_")
-+        or rel_text.startswith("apple-dma-dkms_")
-+        or rel_text.startswith("source/apple-dma-")
-+        or rel_text.startswith("apple-dma-")
-+    )
-+
-+def unique_entries(entries):
-+    seen = {}
-+    result = []
-+    for entry in entries:
-+        path = entry.get("path")
-+        sha = entry.get("sha512")
-+        if path in seen:
-+            if seen[path] != sha:
-+                rel = Path(path)
-+                if is_shared_generated_artifact(rel):
-+                    continue
-+                raise SystemExit(f"conflicting manifest entry for {path}")
-+            continue
-+        seen[path] = sha
-+        result.append(entry)
-+    return result
-+
-+for part in parts:
-+    manifest_path = part / "manifest.json"
-+    if not manifest_path.is_file():
-+        continue
-+    with manifest_path.open("r", encoding="utf-8") as f:
-+        manifest = json.load(f)
-+    manifests.append(manifest)
-+    copy_tree_files(part / "packages", out / "packages")
-+    copy_tree_files(part / "source", out / "source")
-+
-+if not manifests:
-+    raise SystemExit("no guest-tools manifests found")
-+
-+base = manifests[0]
-+dkms_packages = []
-+
-+for manifest in manifests:
-+    driver = manifest.get("driver", {})
-+    dkms_packages.extend(driver.get("dkmsPackages", []))
-+
-+dkms_packages = unique_entries(dkms_packages)
-+
-+driver = dict(base.get("driver", {}))
-+driver["dkmsPackages"] = dkms_packages
-+
-+merged = {
-+    "manifestVersion": 2,
-+    "id": base.get("id"),
-+    "createdBy": "vEGPU GitHub Actions guest-tools merge workflow",
-+    "debian": base.get("debian", {}),
-+    "driver": driver,
-+    "nvidia": base.get("nvidia", {}),
-+    "guestPackages": base.get("guestPackages", []),
-+}
-+
-+with (out / "manifest.json").open("w", encoding="utf-8") as f:
-+    json.dump(merged, f, indent=2, sort_keys=True)
-+    f.write("\n")
-+PY
-+
-+cat >"$OUT_DIR/README.txt" <<'EOF'
-+vEGPU guest tools
-+
-+This directory contains the guest-side apple_dma DKMS source package and the
-+guest-driver source archive.
-+EOF
-+
-+tar -C "$OUT_DIR" -czf "$OUT_DIR/vegpu-guest-driver-bundle.tar.gz" \
-+  README.txt manifest.json packages source
-+
-+(
-+  cd "$OUT_DIR"
-+  find packages source -type f -print | sort > .sha-files
-+  printf '%s\n' vegpu-guest-driver-bundle.tar.gz manifest.json >> .sha-files
-+  shasum -a 512 $(cat .sha-files) > SHA512SUMS
-+  rm -f .sha-files
-+  shasum -a 512 -c SHA512SUMS
-+)
-+
-+echo "Merged guest driver bundle in $OUT_DIR"
 diff --git a/contrib/apple-vfio/.gitignore b/contrib/apple-vfio/.gitignore
 index 98afc1f9d9b005a30e3f31a758725c0286e546d5..cf0b0ecafd3ac096f6258070e5f7a4c3776fdfef 100644
 --- a/contrib/apple-vfio/.gitignore
@@ -558,253 +197,6 @@ index 18b84c52d709fef426a9dde332aacd9dbbf88dde..bc41ed10ba2637563882da45ad20c2a4
  				PRODUCT_NAME = "$(TARGET_NAME)";
  				SDKROOT = macosx;
  				SKIP_INSTALL = YES;
-diff --git a/contrib/apple-vfio/VFIOUserHostApp/AboutNoticesView.swift b/contrib/apple-vfio/VFIOUserHostApp/AboutNoticesView.swift
-new file mode 100644
-index 0000000000000000000000000000000000000000..0c49c88f54c8862a7558f6fa6b54cc96d26eef45
---- /dev/null
-+++ b/contrib/apple-vfio/VFIOUserHostApp/AboutNoticesView.swift
-@@ -0,0 +1,241 @@
-+// Modified by OpenResearchTools, 2026-05-26.
-+// SPDX-License-Identifier: GPL-2.0-or-later
-+
-+import AppKit
-+import SwiftUI
-+
-+private let noticesResourceName = "ThirdPartyNotices"
-+
-+final class AboutWindowController: NSWindowController {
-+    static let shared = AboutWindowController()
-+
-+    private init() {
-+        let hosting = NSHostingController(rootView: AboutView())
-+        let window = NSWindow(contentViewController: hosting)
-+        window.title = "About vEGPU Machine"
-+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-+        window.setContentSize(NSSize(width: 720, height: 440))
-+        window.minSize = NSSize(width: 620, height: 360)
-+        window.isReleasedWhenClosed = false
-+        super.init(window: window)
-+    }
-+
-+    required init?(coder: NSCoder) {
-+        fatalError("init(coder:) has not been implemented")
-+    }
-+
-+    func show() {
-+        guard let window else { return }
-+        window.center()
-+        window.makeKeyAndOrderFront(nil)
-+        NSApp.activate(ignoringOtherApps: true)
-+    }
-+}
-+
-+final class NoticeWindowController: NSWindowController {
-+    static let notices = NoticeWindowController(document: .notices)
-+    static let licenses = NoticeWindowController(document: .licenses)
-+
-+    private init(document: NoticeDocument) {
-+        let hosting = NSHostingController(rootView: NoticeDocumentView(document: document))
-+        let window = NSWindow(contentViewController: hosting)
-+        window.title = "\(document.title) - vEGPU Machine"
-+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-+        window.setContentSize(NSSize(width: 860, height: 640))
-+        window.minSize = NSSize(width: 680, height: 460)
-+        window.isReleasedWhenClosed = false
-+        super.init(window: window)
-+    }
-+
-+    required init?(coder: NSCoder) {
-+        fatalError("init(coder:) has not been implemented")
-+    }
-+
-+    func show() {
-+        guard let window else { return }
-+        window.center()
-+        window.makeKeyAndOrderFront(nil)
-+        NSApp.activate(ignoringOtherApps: true)
-+    }
-+}
-+
-+private struct AboutView: View {
-+    var body: some View {
-+        VStack(alignment: .leading, spacing: 18) {
-+            HStack(alignment: .center, spacing: 16) {
-+                Image(nsImage: NSApp.applicationIconImage)
-+                    .resizable()
-+                    .frame(width: 78, height: 78)
-+                    .cornerRadius(14)
-+
-+                VStack(alignment: .leading, spacing: 5) {
-+                    Text("vEGPU Machine")
-+                        .font(.system(size: 30, weight: .semibold))
-+                    Text(appVersionLine)
-+                        .font(.callout)
-+                        .foregroundStyle(.secondary)
-+                }
-+            }
-+
-+            Divider()
-+
-+            VStack(alignment: .leading, spacing: 11) {
-+                Text("vEGPU Machine bundles the macOS DriverKit host, patched QEMU runtime, firmware, and guest tools for external GPU passthrough workflows.")
-+
-+                Text("DriverKit, VFIO, and QEMU integration work in this distribution is based on Scott J. Goldman's scottjg/qemu-vfio-apple repository at https://github.com/scottjg/qemu-vfio-apple, including work from its wip branch. We are grateful for his work enabling eGPU use on macOS, and we encourage users to follow the original project for its upstream progress.")
-+
-+                Text("The QEMU-side macOS SPICE/virgl rendering runtime also adapts work from the utmapp/qemu QEMU fork at https://github.com/utmapp/qemu and the utmapp/virglrenderer fork at https://github.com/utmapp/virglrenderer.")
-+
-+                Text("vEGPU Machine is not endorsed by, sponsored by, or affiliated with Scott J. Goldman, scottjg/qemu-vfio-apple, utmapp/qemu, utmapp/virglrenderer, or their maintainers. QEMU-derived code is distributed under the GPL version 2 terms applicable to QEMU; bundled dependencies carry their own notices and license texts.")
-+            }
-+            .font(.body)
-+            .foregroundStyle(.primary)
-+            .textSelection(.enabled)
-+            .fixedSize(horizontal: false, vertical: true)
-+
-+            Spacer(minLength: 0)
-+        }
-+        .padding(24)
-+        .frame(minWidth: 620, minHeight: 360)
-+    }
-+
-+    private var appVersionLine: String {
-+        let info = Bundle.main.infoDictionary ?? [:]
-+        let version = info["CFBundleShortVersionString"] as? String ?? "1.0"
-+        let build = info["CFBundleVersion"] as? String ?? ""
-+        return build.isEmpty ? "Version \(version)" : "Version \(version) (\(build))"
-+    }
-+}
-+
-+private enum NoticeDocument: String {
-+    case notices = "NOTICES"
-+    case licenses = "LICENSES"
-+
-+    var title: String {
-+        switch self {
-+        case .notices: return "Notices"
-+        case .licenses: return "Licenses"
-+        }
-+    }
-+
-+    var detail: String {
-+        switch self {
-+        case .notices:
-+            return "Source layers, bundled components, source metadata, and acknowledgements"
-+        case .licenses:
-+            return "Complete license texts for bundled components"
-+        }
-+    }
-+}
-+
-+private struct NoticeDocumentView: View {
-+    let document: NoticeDocument
-+    @State private var text = ""
-+    @State private var loadError: String?
-+
-+    var body: some View {
-+        VStack(alignment: .leading, spacing: 0) {
-+            VStack(alignment: .leading, spacing: 3) {
-+                Text(document.title)
-+                    .font(.title2)
-+                    .fontWeight(.semibold)
-+                Text(document.detail)
-+                    .font(.caption)
-+                    .foregroundStyle(.secondary)
-+            }
-+            .padding([.top, .horizontal], 18)
-+            .padding(.bottom, 12)
-+
-+            Divider()
-+
-+            if let loadError {
-+                VStack(alignment: .leading, spacing: 10) {
-+                    Text("Notice file unavailable")
-+                        .font(.headline)
-+                    Text(loadError)
-+                        .font(.body)
-+                        .foregroundStyle(.secondary)
-+                        .textSelection(.enabled)
-+                }
-+                .padding(18)
-+                Spacer()
-+            } else {
-+                PlainTextView(text: text)
-+            }
-+        }
-+        .onAppear(perform: load)
-+    }
-+
-+    private func load() {
-+        guard let url = noticeURL(for: document) else {
-+            text = ""
-+            loadError = """
-+            \(document.rawValue) was not found in the app bundle.
-+
-+            Build or package vEGPU Machine with Contents/Resources/\(noticesResourceName)/ populated by contrib/apple-vfio/scripts/make-notice-bundle.sh.
-+            """
-+            return
-+        }
-+
-+        do {
-+            text = try String(contentsOf: url, encoding: .utf8)
-+            loadError = nil
-+        } catch {
-+            text = ""
-+            loadError = "Could not read \(url.path): \(error.localizedDescription)"
-+        }
-+    }
-+
-+    private func noticeURL(for document: NoticeDocument) -> URL? {
-+        let resources = Bundle.main.resourceURL
-+        let bundled = resources?
-+            .appendingPathComponent(noticesResourceName, isDirectory: true)
-+            .appendingPathComponent(document.rawValue)
-+        if let bundled, FileManager.default.fileExists(atPath: bundled.path) {
-+            return bundled
-+        }
-+
-+        let direct = resources?.appendingPathComponent(document.rawValue)
-+        if let direct, FileManager.default.fileExists(atPath: direct.path) {
-+            return direct
-+        }
-+
-+        return nil
-+    }
-+}
-+
-+private struct PlainTextView: NSViewRepresentable {
-+    let text: String
-+
-+    func makeNSView(context: Context) -> NSScrollView {
-+        let scroll = NSScrollView()
-+        scroll.hasVerticalScroller = true
-+        scroll.hasHorizontalScroller = true
-+        scroll.autohidesScrollers = false
-+        scroll.borderType = .noBorder
-+
-+        let textView = NSTextView()
-+        textView.isEditable = false
-+        textView.isSelectable = true
-+        textView.isRichText = false
-+        textView.importsGraphics = false
-+        textView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-+        textView.textColor = .textColor
-+        textView.backgroundColor = .textBackgroundColor
-+        textView.textContainerInset = NSSize(width: 12, height: 12)
-+        textView.autoresizingMask = [.width]
-+        textView.textContainer?.widthTracksTextView = false
-+        textView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
-+                                                       height: CGFloat.greatestFiniteMagnitude)
-+        scroll.documentView = textView
-+        return scroll
-+    }
-+
-+    func updateNSView(_ scroll: NSScrollView, context: Context) {
-+        guard let textView = scroll.documentView as? NSTextView else { return }
-+        if textView.string != text {
-+            textView.string = text
-+            textView.scrollToBeginningOfDocument(nil)
-+        }
-+    }
-+}
 diff --git a/contrib/apple-vfio/VFIOUserHostApp/Assets.xcassets/AppIcon.appiconset/Contents.json b/contrib/apple-vfio/VFIOUserHostApp/Assets.xcassets/AppIcon.appiconset/Contents.json
 index 3f00db43ec3c8b462759505d635dc5545d4e8e50..64dc11ee7438ff9d41f0fb625e861d6bb881024c 100644
 --- a/contrib/apple-vfio/VFIOUserHostApp/Assets.xcassets/AppIcon.appiconset/Contents.json
@@ -872,7 +264,7 @@ index 3f00db43ec3c8b462759505d635dc5545d4e8e50..64dc11ee7438ff9d41f0fb625e861d6b
        "scale" : "2x",
        "size" : "512x512"
 diff --git a/contrib/apple-vfio/VFIOUserHostApp/ContentView.swift b/contrib/apple-vfio/VFIOUserHostApp/ContentView.swift
-index 05050453c24c896a32df02bf1dbd665e30b84b97..868ca19f16111b8a9ebe4f04a59ed531f366df6f 100644
+index 05050453c24c896a32df02bf1dbd665e30b84b97..56647c580cad9370bcb83617edfb625c84bd1bb4 100644
 --- a/contrib/apple-vfio/VFIOUserHostApp/ContentView.swift
 +++ b/contrib/apple-vfio/VFIOUserHostApp/ContentView.swift
 @@ -1,17 +1,16 @@
@@ -1067,7 +459,7 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..868ca19f16111b8a9ebe4f04a59ed531
 -            }
          }
 +        .onAppear { refresh() }
-     }
++    }
 +
 +    private func refresh() {
 +        status = .checking
@@ -1126,9 +518,8 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..868ca19f16111b8a9ebe4f04a59ed531
 +    case disabled(String)
 +    case enabled(String)
 +    case unknown(String)
- }
- 
--// MARK: - Row: System extension
++}
++
 +private func detectSipStatus() -> SipStatus {
 +    let process = Process()
 +    let pipe = Pipe()
@@ -1155,15 +546,16 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..868ca19f16111b8a9ebe4f04a59ed531
 +    }
 +    if lower.contains("enabled") {
 +        return .enabled(output)
-+    }
+     }
 +    return .unknown(output)
-+}
-+
+ }
+ 
+-// MARK: - Row: System extension
 +// MARK: - Row: macOS driver
  
  private struct ExtensionRow: View {
      @ObservedObject var activationManager: SystemExtensionActivationManager
-@@ -209,12 +210,23 @@ private struct ExtensionRow: View {
+@@ -209,19 +210,30 @@ private struct ExtensionRow: View {
      var body: some View {
          if activationManager.isExtensionKnownActive {
              ChecklistRow(
@@ -1193,7 +585,6 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..868ca19f16111b8a9ebe4f04a59ed531
 +                }
 +                .disabled(activationManager.requestInFlight)
              }
-@@ -221,7 +233,7 @@ private struct ExtensionRow: View {
          } else if activationManager.isExtensionWaitingForApproval {
              ChecklistRow(
 -                title: "Approve system extension",
@@ -1229,18 +620,32 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..868ca19f16111b8a9ebe4f04a59ed531
              """
          alert.alertStyle = .warning
          alert.addButton(withTitle: "Uninstall")
-@@ -280,78 +291,65 @@ private struct ExtensionRow: View {
+@@ -278,78 +289,65 @@ private struct ExtensionRow: View {
+             activationManager.deactivate()
+         }
      }
-+
+-}
+ 
+-// MARK: - Row: CLI tools
 +    private func confirmAndForceUninstall() {
 +        let alert = NSAlert()
 +        alert.messageText = "Force uninstall the macOS driver?"
 +        alert.informativeText = """
 +            Use this only if a driver from an older vEGPU Machine app remains \
 +            installed after replacing the app. This runs:
-+
+ 
+-private struct CliRow: View {
+-    let layout: BundleLayout
+-    let state: CliState
+-    let onInstall: () -> Void
+-    let onUninstall: () -> Void
+-    let onAddToPath: () -> Void
 +            systemextensionsctl uninstall - \(activationManager.extensionIdentifier)
-+
+ 
+-    /// Names of the CLI tools we actually installed/will install for this
+-    /// bundle. UI-only builds (no dist/) only ship qemu-vfio-apple.
+-    private var bundledToolNames: [String] {
+-        kCliTools.filter { layout.isToolBundled($0) }
 +            macOS may require a reboot to finish removing it.
 +            """
 +        alert.alertStyle = .warning
@@ -1248,8 +653,10 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..868ca19f16111b8a9ebe4f04a59ed531
 +        alert.addButton(withTitle: "Cancel")
 +        guard alert.runModal() == .alertFirstButtonReturn else { return }
 +        runForceUninstall()
-+    }
-+
+     }
+ 
+-    private var toolList: String {
+-        bundledToolNames.joined(separator: ", ")
 +    private func runForceUninstall() {
 +        let identifier = activationManager.extensionIdentifier
 +        activationManager.showStatus("Running forced macOS driver uninstall...")
@@ -1260,57 +667,9 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..868ca19f16111b8a9ebe4f04a59ed531
 +            activationManager.showStatus(result)
 +            activationManager.refreshExtensionActiveState()
 +        }
-+    }
- }
-+
-+private func forceUninstallDriverExtension(_ identifier: String) -> String {
-+    let process = Process()
-+    let output = Pipe()
-+    process.executableURL = URL(fileURLWithPath: "/usr/bin/systemextensionsctl")
-+    process.arguments = ["uninstall", "-", identifier]
-+    process.standardOutput = output
-+    process.standardError = output
-+
-+    do {
-+        try process.run()
-+        process.waitUntilExit()
-+    } catch {
-+        return "Force uninstall failed: \(error.localizedDescription)"
-+    }
-+
-+    let data = output.fileHandleForReading.readDataToEndOfFile()
-+    let message = String(data: data, encoding: .utf8)?
-+        .trimmingCharacters(in: .whitespacesAndNewlines)
-+        ?? ""
-+    if process.terminationStatus == 0 {
-+        return message.isEmpty
-+            ? "Forced macOS driver uninstall completed. Reboot if macOS still shows the driver."
-+            : message
-+    }
-+    return message.isEmpty
-+        ? "Force uninstall failed with status \(process.terminationStatus)."
-+        : "Force uninstall failed with status \(process.terminationStatus): \(message)"
+     }
 +}
  
--// MARK: - Row: CLI tools
--
--private struct CliRow: View {
--    let layout: BundleLayout
--    let state: CliState
--    let onInstall: () -> Void
--    let onUninstall: () -> Void
--    let onAddToPath: () -> Void
--
--    /// Names of the CLI tools we actually installed/will install for this
--    /// bundle. UI-only builds (no dist/) only ship qemu-vfio-apple.
--    private var bundledToolNames: [String] {
--        kCliTools.filter { layout.isToolBundled($0) }
--    }
--
--    private var toolList: String {
--        bundledToolNames.joined(separator: ", ")
--    }
--
 -    var body: some View {
 -        switch state {
 -        case .ok:
@@ -1361,12 +720,36 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..868ca19f16111b8a9ebe4f04a59ed531
 -                    .controlSize(.small)
 -            }
 -        }
--    }
--}
--
- // MARK: - Reusable checklist row
++private func forceUninstallDriverExtension(_ identifier: String) -> String {
++    let process = Process()
++    let output = Pipe()
++    process.executableURL = URL(fileURLWithPath: "/usr/bin/systemextensionsctl")
++    process.arguments = ["uninstall", "-", identifier]
++    process.standardOutput = output
++    process.standardError = output
++
++    do {
++        try process.run()
++        process.waitUntilExit()
++    } catch {
++        return "Force uninstall failed: \(error.localizedDescription)"
++    }
++
++    let data = output.fileHandleForReading.readDataToEndOfFile()
++    let message = String(data: data, encoding: .utf8)?
++        .trimmingCharacters(in: .whitespacesAndNewlines)
++        ?? ""
++    if process.terminationStatus == 0 {
++        return message.isEmpty
++            ? "Forced macOS driver uninstall completed. Reboot if macOS still shows the driver."
++            : message
+     }
++    return message.isEmpty
++        ? "Force uninstall failed with status \(process.terminationStatus)."
++        : "Force uninstall failed with status \(process.terminationStatus): \(message)"
+ }
  
- private enum RowState {
+ // MARK: - Reusable checklist row
 diff --git a/contrib/apple-vfio/VFIOUserHostApp/QEMUBundleSupport.swift b/contrib/apple-vfio/VFIOUserHostApp/QEMUBundleSupport.swift
 index 8d4d1be5e1d72bfe7976ff49097470dcc6306ecf..965e3ce6c4ced62e484c769c17f5e02eb439d422 100644
 --- a/contrib/apple-vfio/VFIOUserHostApp/QEMUBundleSupport.swift
@@ -1981,52 +1364,19 @@ diff --git a/contrib/apple-vfio/VFIOUserHostApp/VFIOUserHostAppApp.swift b/contr
 index a39c5f68952a04677d4837d2ec9fac6aac3253b5..63179c8298660573e439c3f33efc2843e934e09b 100644
 --- a/contrib/apple-vfio/VFIOUserHostApp/VFIOUserHostAppApp.swift
 +++ b/contrib/apple-vfio/VFIOUserHostApp/VFIOUserHostAppApp.swift
-@@ -1,32 +1,177 @@
+@@ -1,3 +1,6 @@
 +// Modified by OpenResearchTools, 2026-05-26.
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +
--//
--//  VFIOUserHostAppApp.swift
--//  VFIOUserHostApp
--//
--//  Setup-only host app for the VFIOUserPCIDriver dext. Real device interaction
--//  happens out-of-process via qemu (bundled at Contents/MacOS/qemu-system-aarch64
--//  by the "Embed QEMU" build phase).
--//
--
--import AppKit
--import SwiftUI
--
--/// Drives the at-launch "move to /Applications" prompt before the SwiftUI
--/// window appears. Lives in the app delegate (rather than `App.init`) so we
--/// have a real `NSApplication` available for `NSAlert.runModal()`.
--final class AppDelegate: NSObject, NSApplicationDelegate {
--    func applicationWillFinishLaunching(_ notification: Notification) {
--        MoveToApplications.runIfNeeded()
--    }
--}
--
--@main
--struct VFIOUserHostAppApp: App {
--    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
--
--    var body: some Scene {
--        WindowGroup {
--            ContentView()
--        }
--        .windowResizability(.contentSize)
-+//
-+//  VFIOUserHostAppApp.swift
-+//  VFIOUserHostApp
-+//
-+//  Setup-only host app for the VFIOUserPCIDriver dext. Real device interaction
-+//  happens out-of-process via qemu (bundled at Contents/MacOS/qemu-system-aarch64
-+//  by the "Embed QEMU" build phase).
-+//
-+
-+import AppKit
+ //
+ //  VFIOUserHostAppApp.swift
+ //  VFIOUserHostApp
+@@ -8,15 +11,130 @@
+ //
+ 
+ import AppKit
 +import Darwin
-+import SwiftUI
+ import SwiftUI
 +import SystemExtensions
 +
 +private enum HeadlessDriverCommand {
@@ -2055,20 +1405,20 @@ index a39c5f68952a04677d4837d2ec9fac6aac3253b5..63179c8298660573e439c3f33efc2843
 +        }
 +    }
 +}
-+
-+/// Drives the at-launch "move to /Applications" prompt before the SwiftUI
-+/// window appears. Lives in the app delegate (rather than `App.init`) so we
-+/// have a real `NSApplication` available for `NSAlert.runModal()`.
-+final class AppDelegate: NSObject, NSApplicationDelegate {
+ 
+ /// Drives the at-launch "move to /Applications" prompt before the SwiftUI
+ /// window appears. Lives in the app delegate (rather than `App.init`) so we
+ /// have a real `NSApplication` available for `NSAlert.runModal()`.
+ final class AppDelegate: NSObject, NSApplicationDelegate {
 +    private var headlessRunner: HeadlessDriverCommandRunner?
 +
-+    func applicationWillFinishLaunching(_ notification: Notification) {
+     func applicationWillFinishLaunching(_ notification: Notification) {
 +        guard HeadlessDriverCommand.current == nil else {
 +            NSApp.setActivationPolicy(.prohibited)
 +            return
 +        }
-+        MoveToApplications.runIfNeeded()
-+    }
+         MoveToApplications.runIfNeeded()
+     }
 +
 +    func applicationDidFinishLaunching(_ notification: Notification) {
 +        guard let command = HeadlessDriverCommand.current else {
@@ -2149,14 +1499,14 @@ index a39c5f68952a04677d4837d2ec9fac6aac3253b5..63179c8298660573e439c3f33efc2843
 +        fflush(stream)
 +        exit(code)
 +    }
-+}
-+
-+@main
-+struct VFIOUserHostAppApp: App {
-+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-+
-+    var body: some Scene {
-+        WindowGroup {
+ }
+ 
+ @main
+@@ -25,8 +143,35 @@ struct VFIOUserHostAppApp: App {
+ 
+     var body: some Scene {
+         WindowGroup {
+-            ContentView()
 +            if HeadlessDriverCommand.current == nil {
 +                ContentView()
 +            } else {
@@ -2167,8 +1517,8 @@ index a39c5f68952a04677d4837d2ec9fac6aac3253b5..63179c8298660573e439c3f33efc2843
 +                        NSApp.windows.forEach { $0.orderOut(nil) }
 +                    }
 +            }
-+        }
-+        .windowResizability(.contentSize)
+         }
+         .windowResizability(.contentSize)
 +        .commands {
 +            CommandGroup(replacing: .appInfo) {
 +                Button("About vEGPU Machine") {
@@ -2204,99 +1554,6 @@ index c9a2ab0de5bd47e4c771e91a2f7b5717cc7c83e7..e6dae82d458395b746639fafb8e5a3a0
  	<key>com.apple.developer.driverkit.allow-any-userclient-access</key>
  	<true/>
  	<key>com.apple.developer.driverkit.transport.pci</key>
-diff --git a/contrib/apple-vfio/patches/spice-server-0.16.0-macos-libressl.patch b/contrib/apple-vfio/patches/spice-server-0.16.0-macos-libressl.patch
-new file mode 100644
-index 0000000000000000000000000000000000000000..a615fed65bf9c303e2dbf827003f747d8564db3d
---- /dev/null
-+++ b/contrib/apple-vfio/patches/spice-server-0.16.0-macos-libressl.patch
-@@ -0,0 +1,21 @@
-+SPDX-License-Identifier: LGPL-2.1-or-later
-+
-+Patch for upstream spice-server 0.16.0. Darwin does not provide a separate
-+librt/libm link target for this build; the needed symbols resolve from
-+libSystem.
-+
-+diff --git a/meson.build b/meson.build
-+index 86c89d0..6a21cf6 100644
-+--- a/meson.build
-++++ b/meson.build
-+@@ -108,7 +108,9 @@ endforeach
-+ 
-+ if host_machine.system() != 'windows'
-+   foreach dep : ['rt', 'm']
-+-    spice_server_deps += compiler.find_library(dep)
-++    if host_machine.system() != 'darwin'
-++      spice_server_deps += compiler.find_library(dep)
-++    endif
-+   endforeach
-+ else
-+   foreach dep : ['ws2_32', 'shlwapi']
-diff --git a/contrib/apple-vfio/patches/virglrenderer-utm-macos-no-egl-cleanup.patch b/contrib/apple-vfio/patches/virglrenderer-utm-macos-no-egl-cleanup.patch
-new file mode 100644
-index 0000000000000000000000000000000000000000..e8fe40cee3018f6469205dd5c14de697f2b09e53
---- /dev/null
-+++ b/contrib/apple-vfio/patches/virglrenderer-utm-macos-no-egl-cleanup.patch
-@@ -0,0 +1,60 @@
-+Source: local compatibility patch carried for utmapp/virglrenderer
-+Target repository: https://github.com/utmapp/virglrenderer.git
-+Target commit used by build-display-deps.sh: d48a2d0d9a722fffd3f92c83e71d9426a4892a66
-+Purpose: keep the macOS Metal build from using EGL image cleanup when the
-+         selected virglrenderer configuration has no EGL headers, define the
-+         tiny ANGLE Metal EGL constants needed by UTM virglrenderer when the
-+         build intentionally does not import ANGLE headers, and keep the
-+         OpenGL/virgl runtime from initializing the Venus proxy renderer
-+         unless QEMU explicitly requested Venus.
-+License: same license terms as the patched virglrenderer source file.
-+
-+OpenResearchTools modification notice date: 2026-05-26.
-+OpenResearchTools carries this compatibility patch in the utmapp/qemu-based visual runtime layer.
-+
-+diff --git a/src/vrend/vrend_winsys_egl.c b/src/vrend/vrend_winsys_egl.c
-+index 5a158db..ccde185 100644
-+--- a/src/vrend/vrend_winsys_egl.c
-++++ b/src/vrend/vrend_winsys_egl.c
-+@@ -70,6 +70,13 @@
-+ #define EGL_EXT_DEVICE_QUERY                   BIT(11)
-+ #define EGL_EXT_PLATFORM_DEVICE                BIT(12)
-+ 
-++#ifndef EGL_METAL_TEXTURE_ANGLE
-++#define EGL_METAL_TEXTURE_ANGLE 0x34A7
-++#endif
-++#ifndef EGL_METAL_DEVICE_ANGLE
-++#define EGL_METAL_DEVICE_ANGLE 0x34A6
-++#endif
-++
-+ static const struct {
-+    uint32_t bit;
-+    const char *string;
-+
-+diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-+index b8934dc..b7a8467 100644
-+--- a/src/vrend/vrend_renderer.c
-++++ b/src/vrend/vrend_renderer.c
-+@@ -9090,7 +9090,7 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
-+       glDeleteMemoryObjectsEXT(1, &res->memobj);
-+    }
-+ 
-+-#if defined(ENABLE_GBM) || defined(ENABLE_METAL)
-++#if defined(HAVE_EPOXY_EGL_H) && (defined(ENABLE_GBM) || defined(ENABLE_METAL))
-+    if (res->egl_image) {
-+       virgl_egl_image_destroy(egl, res->egl_image);
-+       for (unsigned i = 0; i < ARRAY_SIZE(res->aux_plane_egl_image); i++) {
-+
-+diff --git a/src/virglrenderer.c b/src/virglrenderer.c
-+index 0e70298..3e8e3a2 100644
-+--- a/src/virglrenderer.c
-++++ b/src/virglrenderer.c
-+@@ -939,7 +939,7 @@ int virgl_renderer_init(void *cookie, int flags, struct virgl_renderer_callbacks
-+       state.vrend_initialized = true;
-+    }
-+ 
-+-   if (!state.proxy_initialized) {
-++   if ((flags & VIRGL_RENDERER_VENUS) && !state.proxy_initialized) {
-+       ret = proxy_renderer_init(&proxy_cbs, flags | VIRGL_RENDERER_NO_VIRGL);
-+       if (ret) {
-+          virgl_error("failed to initialize venus renderer");
 diff --git a/contrib/apple-vfio/qemu-vfio-apple/Cache.swift b/contrib/apple-vfio/qemu-vfio-apple/Cache.swift
 index 03fb91dc5a9b9c01b4d15a3b075b6821c0691334..96c3922050dbe3494c0c2226bebdb357d6488aa7 100644
 --- a/contrib/apple-vfio/qemu-vfio-apple/Cache.swift
@@ -4115,612 +3372,6 @@ index d65b071f7f584eb2b58b3c89f6c8f7311dcc21d5..a8098274af20f7a9a45ee2164d0a5a33
  }
  
  // MARK: - Formatting
-diff --git a/contrib/apple-vfio/scripts/build-display-deps.sh b/contrib/apple-vfio/scripts/build-display-deps.sh
-new file mode 100755
-index 0000000000000000000000000000000000000000..eb420547adb7cb5374db6ebfcd1ba1e8232fd3c6
---- /dev/null
-+++ b/contrib/apple-vfio/scripts/build-display-deps.sh
-@@ -0,0 +1,314 @@
-+#!/bin/bash
-+#
-+# SPDX-License-Identifier: GPL-2.0-or-later
-+#
-+# Modified by OpenResearchTools, 2026-05-26.
-+# This file contains OpenResearchTools modifications for the macOS SPICE/virgl display runtime.
-+#
-+# Build macOS display dependencies that Homebrew does not provide in the
-+# shape QEMU needs for vEGPU's SPICE/virgl display runtime.
-+#
-+# UTM QEMU uses a UTM-maintained virglrenderer fork for macOS native scanout.
-+# Keep this script in the GPL QEMU tree because the resulting dependency feeds
-+# the GPL qemu-system-aarch64 binary, not the frontend viewer app.
-+
-+set -euo pipefail
-+
-+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-+PATCH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/patches"
-+PREFIX="${1:-$PWD/.deps/qemu-display}"
-+WORK="${2:-$PWD/.deps/src}"
-+LIBRESSL_VERSION="${LIBRESSL_VERSION:-4.3.2}"
-+LIBRESSL_URL="${LIBRESSL_URL:-https://cdn.openbsd.org/pub/OpenBSD/LibreSSL/libressl-${LIBRESSL_VERSION}.tar.gz}"
-+LIBRESSL_SHA256="${LIBRESSL_SHA256:-edf01aee24c65d69e6a9efcb9d44bcda682ff9d4f3bbbd95e794e1dfa90847b5}"
-+LIBEPOXY_VERSION="${LIBEPOXY_VERSION:-1.5.10}"
-+LIBEPOXY_URL="${LIBEPOXY_URL:-https://github.com/anholt/libepoxy/archive/refs/tags/${LIBEPOXY_VERSION}.tar.gz}"
-+LIBEPOXY_SHA256="${LIBEPOXY_SHA256:-a7ced37f4102b745ac86d6a70a9da399cc139ff168ba6b8002b4d8d43c900c15}"
-+SPICE_PROTOCOL_VERSION="${SPICE_PROTOCOL_VERSION:-0.14.5}"
-+SPICE_PROTOCOL_URL="${SPICE_PROTOCOL_URL:-https://www.spice-space.org/download/releases/spice-protocol-${SPICE_PROTOCOL_VERSION}.tar.xz}"
-+SPICE_PROTOCOL_SHA256="${SPICE_PROTOCOL_SHA256:-baf58449f6e89d19f475899ad5fb9196fdc46c03cc53233f4e39cf2978f9cff7}"
-+SPICE_SERVER_VERSION="${SPICE_SERVER_VERSION:-0.16.0}"
-+SPICE_SERVER_URL="${SPICE_SERVER_URL:-https://gitlab.freedesktop.org/-/project/62/uploads/54a0f9f5d1840e1ad8060cb560f3dde6/spice-${SPICE_SERVER_VERSION}.tar.bz2}"
-+SPICE_SERVER_SHA256="${SPICE_SERVER_SHA256:-0a6ec9528f05371261bbb2d46ff35e7b5c45ff89bb975a99af95a5f20ff4717d}"
-+VIRGL_REPO="${VIRGL_REPO:-https://github.com/utmapp/virglrenderer.git}"
-+VIRGL_COMMIT="${VIRGL_COMMIT:-d48a2d0d9a722fffd3f92c83e71d9426a4892a66}"
-+VIRGL_VENUS="${VIRGL_VENUS:-false}"
-+
-+mkdir -p "$PREFIX" "$WORK"
-+
-+PY_VENV="$WORK/py-venv"
-+if [ ! -x "$PY_VENV/bin/python3" ]; then
-+    python3 -m venv "$PY_VENV"
-+fi
-+"$PY_VENV/bin/python3" -m pip install --upgrade pip >/dev/null
-+"$PY_VENV/bin/python3" -m pip install PyYAML pyparsing >/dev/null
-+
-+DEPS_PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig:${PKG_CONFIG_PATH:-}"
-+
-+jobs() {
-+    if command -v sysctl >/dev/null 2>&1; then
-+        sysctl -n hw.ncpu 2>/dev/null && return 0
-+    fi
-+    if command -v nproc >/dev/null 2>&1; then
-+        nproc && return 0
-+    fi
-+    echo 4
-+}
-+
-+download_checked() {
-+    local url="$1"
-+    local dest="$2"
-+    local sha256="$3"
-+
-+    if [ ! -f "$dest" ]; then
-+        echo "[build-display-deps] downloading: $url"
-+        curl --fail --location --retry 3 --connect-timeout 20 \
-+            --output "$dest.tmp" "$url"
-+        mv "$dest.tmp" "$dest"
-+    fi
-+    echo "$sha256  $dest" | shasum -a 256 -c -
-+}
-+
-+extract_clean() {
-+    local archive="$1"
-+    local dest="$2"
-+
-+    rm -rf "$dest"
-+    mkdir -p "$dest"
-+    tar -xf "$archive" -C "$dest" --strip-components=1
-+}
-+
-+write_minimal_egl_platform_headers() {
-+    mkdir -p "$PREFIX/include/EGL" "$PREFIX/include/KHR"
-+    cat > "$PREFIX/include/KHR/khrplatform.h" <<'EOF'
-+#ifndef VEGPU_MINIMAL_KHRPLATFORM_H
-+#define VEGPU_MINIMAL_KHRPLATFORM_H
-+/*
-+ * Modified by OpenResearchTools, 2026-05-29.
-+ * SPDX-License-Identifier: GPL-2.0-or-later
-+ *
-+ * Minimal build-only Khronos platform typedefs for libepoxy's EGL dispatch
-+ * generator. This intentionally avoids importing Khronos/ANGLE EGL headers
-+ * into the GPL QEMU/Machine source or artifacts.
-+ */
-+#include <stdint.h>
-+#include <stddef.h>
-+#ifndef KHRONOS_APICALL
-+#define KHRONOS_APICALL extern
-+#endif
-+#ifndef KHRONOS_APIENTRY
-+#define KHRONOS_APIENTRY
-+#endif
-+#ifndef KHRONOS_APIATTRIBUTES
-+#define KHRONOS_APIATTRIBUTES
-+#endif
-+#endif
-+EOF
-+    cat > "$PREFIX/include/EGL/eglplatform.h" <<'EOF'
-+#ifndef VEGPU_MINIMAL_EGLPLATFORM_H
-+#define VEGPU_MINIMAL_EGLPLATFORM_H
-+/*
-+ * Modified by OpenResearchTools, 2026-05-29.
-+ * SPDX-License-Identifier: GPL-2.0-or-later
-+ *
-+ * Minimal build-only EGL platform declarations for macOS ANGLE loading.
-+ */
-+#include <KHR/khrplatform.h>
-+#include <stdint.h>
-+typedef int32_t EGLint;
-+typedef void *EGLNativeDisplayType;
-+typedef void *EGLNativePixmapType;
-+typedef void *EGLNativeWindowType;
-+#ifndef EGLAPI
-+#define EGLAPI KHRONOS_APICALL
-+#endif
-+#ifndef EGLAPIENTRY
-+#define EGLAPIENTRY KHRONOS_APIENTRY
-+#endif
-+#define EGLAPIENTRYP EGLAPIENTRY *
-+#endif
-+EOF
-+}
-+
-+patch_libepoxy_for_macos_angle() {
-+    "$PY_VENV/bin/python3" - "$WORK/libepoxy/src/dispatch_common.h" \
-+        "$WORK/libepoxy/src/dispatch_common.c" <<'PY'
-+import pathlib
-+import sys
-+
-+header = pathlib.Path(sys.argv[1])
-+source = pathlib.Path(sys.argv[2])
-+
-+text = header.read_text()
-+old = "#elif defined(__APPLE__)\n#define PLATFORM_HAS_EGL 0 \n"
-+new = "#elif defined(__APPLE__)\n#define PLATFORM_HAS_EGL ENABLE_EGL\n"
-+if old not in text:
-+    raise SystemExit("could not find libepoxy macOS EGL platform guard")
-+header.write_text(text.replace(old, new))
-+
-+text = source.read_text()
-+old = (
-+    '#define OPENGL_LIB "/System/Library/Frameworks/OpenGL.framework/Versions/Current/OpenGL"\n'
-+    '#define GLES1_LIB "libGLESv1_CM.so"\n'
-+    '#define GLES2_LIB "libGLESv2.so"\n'
-+)
-+new = (
-+    '#define OPENGL_LIB "GLESv2.framework/Versions/Current/GLESv2"\n'
-+    '#define EGL_LIB "EGL.framework/Versions/Current/EGL"\n'
-+    '#define GLES1_LIB "GLESv2.framework/Versions/Current/GLESv2"\n'
-+    '#define GLES2_LIB "GLESv2.framework/Versions/Current/GLESv2"\n'
-+)
-+if old not in text:
-+    raise SystemExit("could not find libepoxy macOS framework library names")
-+source.write_text(text.replace(old, new))
-+PY
-+}
-+
-+clone_or_update() {
-+    local repo="$1"
-+    local dir="$2"
-+    local commit="$3"
-+
-+    if [ ! -d "$dir/.git" ]; then
-+        git clone "$repo" "$dir"
-+    else
-+        git -C "$dir" fetch --tags --prune origin
-+    fi
-+    git -C "$dir" checkout "$commit"
-+    git -C "$dir" reset --hard "$commit"
-+}
-+
-+echo "[build-display-deps] prefix: $PREFIX"
-+echo "[build-display-deps] libepoxy: $LIBEPOXY_URL"
-+echo "[build-display-deps] libressl: $LIBRESSL_URL"
-+echo "[build-display-deps] spice-protocol: $SPICE_PROTOCOL_URL"
-+echo "[build-display-deps] spice-server: $SPICE_SERVER_URL"
-+echo "[build-display-deps] virglrenderer: $VIRGL_REPO @ $VIRGL_COMMIT"
-+echo "[build-display-deps] venus: $VIRGL_VENUS"
-+
-+download_checked "$LIBEPOXY_URL" "$WORK/libepoxy-${LIBEPOXY_VERSION}.tar.gz" "$LIBEPOXY_SHA256"
-+extract_clean "$WORK/libepoxy-${LIBEPOXY_VERSION}.tar.gz" "$WORK/libepoxy"
-+write_minimal_egl_platform_headers
-+patch_libepoxy_for_macos_angle
-+rm -rf "$WORK/libepoxy-build"
-+PATH="$PY_VENV/bin:$PATH" \
-+CPPFLAGS="-I$PREFIX/include ${CPPFLAGS:-}" \
-+CFLAGS="-I$PREFIX/include ${CFLAGS:-}" \
-+PYTHON="$PY_VENV/bin/python3" \
-+meson setup "$WORK/libepoxy-build" "$WORK/libepoxy" \
-+    --prefix "$PREFIX" \
-+    --libdir lib \
-+    --buildtype release \
-+    -Degl=yes \
-+    -Dglx=no \
-+    -Dtests=false \
-+    -Dx11=false
-+ninja -C "$WORK/libepoxy-build" install
-+PKG_CONFIG_PATH="$DEPS_PKG_CONFIG_PATH" \
-+pkg-config --modversion epoxy | grep -Fx "$LIBEPOXY_VERSION"
-+PKG_CONFIG_PATH="$DEPS_PKG_CONFIG_PATH" \
-+pkg-config --variable=epoxy_has_egl epoxy | grep -Fx 1
-+test -f "$PREFIX/include/epoxy/egl.h"
-+test -f "$PREFIX/include/EGL/eglplatform.h"
-+test -f "$PREFIX/lib/libepoxy.0.dylib"
-+
-+download_checked "$LIBRESSL_URL" "$WORK/libressl-${LIBRESSL_VERSION}.tar.gz" "$LIBRESSL_SHA256"
-+extract_clean "$WORK/libressl-${LIBRESSL_VERSION}.tar.gz" "$WORK/libressl"
-+(
-+    cd "$WORK/libressl"
-+    ./configure --prefix="$PREFIX" --disable-static
-+    make -j"$(jobs)"
-+    make install
-+)
-+
-+download_checked "$SPICE_PROTOCOL_URL" "$WORK/spice-protocol-${SPICE_PROTOCOL_VERSION}.tar.xz" "$SPICE_PROTOCOL_SHA256"
-+extract_clean "$WORK/spice-protocol-${SPICE_PROTOCOL_VERSION}.tar.xz" "$WORK/spice-protocol"
-+rm -rf "$WORK/spice-protocol-build"
-+PATH="$PY_VENV/bin:$PATH" \
-+PKG_CONFIG_PATH="$DEPS_PKG_CONFIG_PATH" \
-+PYTHON="$PY_VENV/bin/python3" \
-+meson setup "$WORK/spice-protocol-build" "$WORK/spice-protocol" \
-+    --prefix "$PREFIX" \
-+    --libdir lib \
-+    --buildtype release
-+ninja -C "$WORK/spice-protocol-build" install
-+
-+download_checked "$SPICE_SERVER_URL" "$WORK/spice-${SPICE_SERVER_VERSION}.tar.bz2" "$SPICE_SERVER_SHA256"
-+extract_clean "$WORK/spice-${SPICE_SERVER_VERSION}.tar.bz2" "$WORK/spice-server"
-+git -C "$WORK/spice-server" apply \
-+    "$PATCH_DIR/spice-server-0.16.0-macos-libressl.patch"
-+rm -rf "$WORK/spice-server-build"
-+PATH="$PY_VENV/bin:$PATH" \
-+PKG_CONFIG_PATH="$DEPS_PKG_CONFIG_PATH" \
-+PYTHON="$PY_VENV/bin/python3" \
-+meson setup "$WORK/spice-server-build" "$WORK/spice-server" \
-+    --prefix "$PREFIX" \
-+    --libdir lib \
-+    --buildtype release \
-+    -Dmanual=false \
-+    -Dtests=false \
-+    -Dsasl=false \
-+    -Dsmartcard=disabled \
-+    -Dopus=enabled \
-+    -Dgstreamer=1.0
-+ninja -C "$WORK/spice-server-build" install
-+
-+PKG_CONFIG_PATH="$DEPS_PKG_CONFIG_PATH" \
-+pkg-config --modversion openssl | grep -Fx "$LIBRESSL_VERSION"
-+PKG_CONFIG_PATH="$DEPS_PKG_CONFIG_PATH" \
-+pkg-config --modversion spice-protocol | grep -Fx "$SPICE_PROTOCOL_VERSION"
-+PKG_CONFIG_PATH="$DEPS_PKG_CONFIG_PATH" \
-+pkg-config --modversion spice-server | grep -Fx "$SPICE_SERVER_VERSION"
-+test -f "$PREFIX/lib/libssl.60.dylib"
-+test -f "$PREFIX/lib/libcrypto.57.dylib"
-+test ! -e "$PREFIX/lib/libssl.3.dylib"
-+test ! -e "$PREFIX/lib/libcrypto.3.dylib"
-+
-+clone_or_update "$VIRGL_REPO" "$WORK/virglrenderer" "$VIRGL_COMMIT"
-+git -C "$WORK/virglrenderer" apply \
-+    "$PATCH_DIR/virglrenderer-utm-macos-no-egl-cleanup.patch"
-+
-+rm -rf "$WORK/virglrenderer-build"
-+MESON_LDFLAGS="${LDFLAGS:-}"
-+if [ "$(uname -s)" = "Darwin" ]; then
-+    MESON_LDFLAGS="${MESON_LDFLAGS:+$MESON_LDFLAGS }-framework Foundation -framework CoreFoundation"
-+fi
-+
-+PATH="$PY_VENV/bin:$PATH" \
-+PKG_CONFIG_PATH="$DEPS_PKG_CONFIG_PATH" \
-+PYTHON="$PY_VENV/bin/python3" \
-+LDFLAGS="$MESON_LDFLAGS" \
-+meson setup "$WORK/virglrenderer-build" "$WORK/virglrenderer" \
-+    --prefix "$PREFIX" \
-+    --libdir lib \
-+    --buildtype release \
-+    -Dtests=false \
-+    -Dfuzzer=false \
-+    -Dvenus="$VIRGL_VENUS" \
-+    -Dunstable-apis=true
-+
-+ninja -C "$WORK/virglrenderer-build" install
-+
-+cat > "$WORK/check-virgl-no-proxy.c" <<'EOF'
-+#include <stddef.h>
-+#include <virgl/virglrenderer.h>
-+
-+static struct virgl_renderer_callbacks callbacks = {
-+    .version = 1,
-+};
-+
-+int main(void)
-+{
-+    return virgl_renderer_init((void *)1, VIRGL_RENDERER_NO_VIRGL, &callbacks);
-+}
-+EOF
-+cc "$WORK/check-virgl-no-proxy.c" \
-+    -I"$PREFIX/include" \
-+    -L"$PREFIX/lib" \
-+    -lvirglrenderer \
-+    -Wl,-rpath,"$PREFIX/lib" \
-+    -o "$WORK/check-virgl-no-proxy"
-+"$WORK/check-virgl-no-proxy"
-+
-+echo "[build-display-deps] pkg-config path:"
-+echo "$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
-diff --git a/contrib/apple-vfio/scripts/build-installer-pkg.sh b/contrib/apple-vfio/scripts/build-installer-pkg.sh
-new file mode 100755
-index 0000000000000000000000000000000000000000..82dee84407513099de67b96decfb947bde36af02
---- /dev/null
-+++ b/contrib/apple-vfio/scripts/build-installer-pkg.sh
-@@ -0,0 +1,58 @@
-+#!/usr/bin/env bash
-+# Modified by OpenResearchTools, 2026-05-26.
-+# SPDX-License-Identifier: GPL-2.0-or-later
-+set -euo pipefail
-+
-+HERE="$(cd "$(dirname "$0")" && pwd)"
-+REPO_ROOT="$(cd "$HERE/../../.." && pwd)"
-+
-+APP="${1:-${APP_PATH:-$REPO_ROOT/build/xcode-nosip/Build/Products/Debug/vEGPU Machine.app}}"
-+OUT="${2:-${PKG_OUT:-$REPO_ROOT/artifacts/vEGPU-Machine.pkg}}"
-+IDENTIFIER="${PKG_IDENTIFIER:-com.openresearchtools.vEGPUMachine.pkg}"
-+VERSION="${PKG_VERSION:-0.1.1}"
-+
-+if [[ ! -d "$APP" ]]; then
-+  echo "error: app bundle not found: $APP" >&2
-+  echo "Build it first, for example: contrib/apple-vfio/scripts/build-nosip.sh --build" >&2
-+  exit 1
-+fi
-+
-+if [[ ! -x "$APP/Contents/MacOS/vEGPU Machine" && ! -x "$APP/Contents/MacOS/VFIOUserHostApp" ]]; then
-+  echo "error: malformed app bundle, missing host executable: $APP" >&2
-+  exit 1
-+fi
-+
-+if [[ ! -x "$APP/Contents/MacOS/qemu-system-aarch64" ]]; then
-+  echo "error: app bundle does not contain qemu-system-aarch64: $APP" >&2
-+  echo "Build with QEMU_DIST_DIR or an in-tree dist/ so vEGPU Machine.app contains QEMU." >&2
-+  exit 1
-+fi
-+
-+mkdir -p "$(dirname "$OUT")"
-+rm -f "$OUT"
-+
-+STAGE="$(mktemp -d "${TMPDIR:-/tmp}/vEGPU-Machine-pkg.XXXXXX")"
-+COMPONENTS="$(mktemp "${TMPDIR:-/tmp}/vEGPU-Machine-components.XXXXXX")"
-+trap 'rm -rf "$STAGE" "$COMPONENTS"' EXIT
-+
-+mkdir -p "$STAGE/Applications"
-+ditto "$APP" "$STAGE/Applications/vEGPU Machine.app"
-+
-+pkgbuild --analyze --root "$STAGE" "$COMPONENTS" >/dev/null
-+/usr/libexec/PlistBuddy -c 'Set :0:BundleIsRelocatable false' "$COMPONENTS"
-+/usr/libexec/PlistBuddy -c 'Set :0:BundleOverwriteAction upgrade' "$COMPONENTS"
-+
-+ARGS=(
-+  --root "$STAGE"
-+  --component-plist "$COMPONENTS"
-+  --install-location /
-+  --identifier "$IDENTIFIER"
-+  --version "$VERSION"
-+)
-+
-+if [[ -n "${INSTALLER_SIGN_IDENTITY:-}" ]]; then
-+  ARGS+=(--sign "$INSTALLER_SIGN_IDENTITY")
-+fi
-+
-+pkgbuild "${ARGS[@]}" "$OUT" >&2
-+echo "$OUT"
-diff --git a/contrib/apple-vfio/scripts/build-nosip.sh b/contrib/apple-vfio/scripts/build-nosip.sh
-new file mode 100755
-index 0000000000000000000000000000000000000000..8fad4a46992b2e6712e47921286a983463bcb47b
---- /dev/null
-+++ b/contrib/apple-vfio/scripts/build-nosip.sh
-@@ -0,0 +1,223 @@
-+#!/bin/bash
-+# Modified by OpenResearchTools, 2026-05-26.
-+# SPDX-License-Identifier: GPL-2.0-or-later
-+set -euo pipefail
-+
-+# SIP-disabled build: build without Xcode-managed signing, then ad-hoc sign
-+# the app, dext, and bundled tools with the checked-in entitlements.
-+
-+HERE="$(cd "$(dirname "$0")" && pwd)"
-+REPO_ROOT="$(cd "$HERE/../../.." && pwd)"
-+APPLE_VFIO_DIR="$REPO_ROOT/contrib/apple-vfio"
-+PROJECT="$APPLE_VFIO_DIR/VFIOUserHostApp.xcodeproj"
-+DERIVED_DATA="${DERIVED_DATA:-$REPO_ROOT/build/xcode-nosip}"
-+DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
-+
-+CONFIGURATION="${CONFIGURATION:-Debug}"
-+SCHEME="${SCHEME:-VFIOUserHostApp}"
-+ARCHS="${ARCHS:-arm64}"
-+ONLY_ACTIVE_ARCH="${ONLY_ACTIVE_ARCH:-NO}"
-+APP="$DERIVED_DATA/Build/Products/$CONFIGURATION/vEGPU Machine.app"
-+DEXT="$APP/Contents/Library/SystemExtensions/com.vegpu.machine.VFIOUserPCIDriver.dext"
-+GENERATED_NOTICES="${THIRD_PARTY_NOTICES_DIR:-$DERIVED_DATA/generated-third-party-notices}"
-+NOTICE_DIST_DIR="${QEMU_DIST_DIR:-$REPO_ROOT/dist}"
-+
-+APP_ENT="$APPLE_VFIO_DIR/VFIOUserHostApp/VFIOUserHostApp.entitlements"
-+DEXT_ENT="$APPLE_VFIO_DIR/VFIOUserPCIDriver/VFIOUserPCIDriver.entitlements"
-+QEMU_ENT="$REPO_ROOT/accel/hvf/entitlements.plist"
-+CLI_ENT="$APPLE_VFIO_DIR/qemu-vfio-apple/qemu-vfio-apple.entitlements"
-+
-+BUILD_ONLY=0
-+if [[ "${1:-}" == "--build" ]]; then
-+  BUILD_ONLY=1
-+fi
-+
-+if [[ "$BUILD_ONLY" != "1" ]]; then
-+  SIP_STATUS="$(csrutil status 2>&1 || true)"
-+  if [[ "$SIP_STATUS" == *"enabled"* ]]; then
-+    echo "ERROR: System Integrity Protection (SIP) is enabled."
-+    echo "This no-SIP build uses ad-hoc signatures and is meant for SIP-disabled dev machines."
-+    echo "Boot Recovery and run: csrutil disable"
-+    exit 1
-+  fi
-+fi
-+
-+echo "Generating third-party notices from source/build inputs..."
-+"$APPLE_VFIO_DIR/scripts/make-notice-bundle.sh" "$GENERATED_NOTICES" "$NOTICE_DIST_DIR"
-+
-+XCODE_VERSION_ARGS=()
-+if [[ -n "${MARKETING_VERSION:-}" ]]; then
-+  XCODE_VERSION_ARGS+=("MARKETING_VERSION=$MARKETING_VERSION")
-+fi
-+if [[ -n "${CURRENT_PROJECT_VERSION:-}" ]]; then
-+  XCODE_VERSION_ARGS+=("CURRENT_PROJECT_VERSION=$CURRENT_PROJECT_VERSION")
-+fi
-+
-+echo "Building vEGPU Machine without Xcode-managed signing..."
-+DEVELOPER_DIR="$DEVELOPER_DIR" THIRD_PARTY_NOTICES_DIR="$GENERATED_NOTICES" xcodebuild clean build \
-+  -project "$PROJECT" \
-+  -scheme "$SCHEME" \
-+  -configuration "$CONFIGURATION" \
-+  -destination "generic/platform=macOS" \
-+  -derivedDataPath "$DERIVED_DATA" \
-+  ARCHS="$ARCHS" \
-+  ONLY_ACTIVE_ARCH="$ONLY_ACTIVE_ARCH" \
-+  "${XCODE_VERSION_ARGS[@]}" \
-+  CODE_SIGN_IDENTITY="" \
-+  CODE_SIGNING_REQUIRED=NO \
-+  CODE_SIGNING_ALLOWED=NO \
-+  DEVELOPMENT_TEAM="" \
-+  PROVISIONING_PROFILE_SPECIFIER=""
-+
-+if [[ ! -d "$APP" ]]; then
-+  echo "ERROR: app was not produced at $APP"
-+  exit 1
-+fi
-+
-+if [[ ! -d "$DEXT" ]]; then
-+  echo "ERROR: dext was not embedded at $DEXT"
-+  exit 1
-+fi
-+
-+echo "Writing app release manifest..."
-+python3 - "$APP" "$REPO_ROOT" <<'PY'
-+import json
-+import os
-+import plistlib
-+import subprocess
-+import sys
-+from pathlib import Path
-+
-+app = Path(sys.argv[1])
-+repo_root = Path(sys.argv[2])
-+info_path = app / "Contents" / "Info.plist"
-+resources = app / "Contents" / "Resources"
-+guest_manifest_path = resources / "guest-tools" / "manifest.json"
-+out_path = resources / "manifest.json"
-+
-+with info_path.open("rb") as f:
-+    info = plistlib.load(f)
-+
-+if guest_manifest_path.is_file():
-+    with guest_manifest_path.open("r", encoding="utf-8") as f:
-+        guest_manifest = json.load(f)
-+else:
-+    guest_manifest = {}
-+
-+def git_value(*args):
-+    try:
-+        return subprocess.check_output(
-+            ["git", *args],
-+            cwd=repo_root,
-+            stderr=subprocess.DEVNULL,
-+            text=True,
-+        ).strip()
-+    except Exception:
-+        return ""
-+
-+source_revision = os.environ.get("GITHUB_SHA") or git_value("rev-parse", "HEAD")
-+source_ref = os.environ.get("GITHUB_REF") or git_value("rev-parse", "--abbrev-ref", "HEAD")
-+explicit_release_tag = os.environ.get("VGPU_RELEASE_TAG", "")
-+if os.environ.get("VGPU_PUBLISH_RELEASE") == "true" and explicit_release_tag:
-+    release_tag = explicit_release_tag
-+else:
-+    release_tag = os.environ.get("GITHUB_REF_NAME", "")
-+    if os.environ.get("GITHUB_REF_TYPE") != "tag" and os.environ.get("GITHUB_EVENT_NAME") != "release":
-+        release_tag = ""
-+
-+driver = guest_manifest.get("driver", {})
-+
-+manifest = {
-+    "manifestVersion": 1,
-+    "product": "vEGPU Machine",
-+    "bundleIdentifier": info.get("CFBundleIdentifier", ""),
-+    "bundleName": info.get("CFBundleName", "vEGPU Machine"),
-+    "version": info.get("CFBundleShortVersionString", ""),
-+    "build": info.get("CFBundleVersion", ""),
-+    "sourceRevision": source_revision,
-+    "sourceRef": source_ref,
-+    "releaseTag": release_tag,
-+    "distribution": {
-+        "format": "zip",
-+        "installPath": "/Applications/vEGPU Machine.app",
-+        "signing": "ad-hoc",
-+        "hostPlatform": "macOS",
-+        "arch": os.environ.get("ARCHS", "arm64"),
-+    },
-+    "guestTools": {
-+        "manifestPath": "Contents/Resources/guest-tools/manifest.json",
-+        "driverVersion": driver.get("version", ""),
-+        "moduleName": driver.get("moduleName", "apple_dma"),
-+        "dkmsPackages": driver.get("dkmsPackages", []),
-+    },
-+}
-+
-+resources.mkdir(parents=True, exist_ok=True)
-+with out_path.open("w", encoding="utf-8") as f:
-+    json.dump(manifest, f, indent=2, sort_keys=True)
-+    f.write("\n")
-+PY
-+
-+sign_plain() {
-+  local path="$1"
-+  if [[ -e "$path" ]]; then
-+    codesign --force --sign - --timestamp=none "$path"
-+  fi
-+}
-+
-+echo "Ad-hoc signing bundled QEMU support files..."
-+if [[ -d "$APP/Contents/MacOS/lib" ]]; then
-+  while IFS= read -r dylib; do
-+    sign_plain "$dylib"
-+  done < <(find "$APP/Contents/MacOS/lib" -type f -name '*.dylib' -print)
-+fi
-+
-+sign_plain "$APP/Contents/MacOS/qemu-img"
-+if [[ -f "$APP/Contents/MacOS/qemu-system-aarch64" ]]; then
-+  codesign --force --sign - --timestamp=none --entitlements "$QEMU_ENT" \
-+    "$APP/Contents/MacOS/qemu-system-aarch64"
-+fi
-+
-+echo "Ad-hoc signing app helpers..."
-+sign_plain "$APP/Contents/MacOS/vEGPU Machine.debug.dylib"
-+sign_plain "$APP/Contents/MacOS/VFIOUserHostApp.debug.dylib"
-+sign_plain "$APP/Contents/MacOS/__preview.dylib"
-+if [[ -f "$APP/Contents/MacOS/qemu-vfio-apple" ]]; then
-+  codesign --force --sign - --timestamp=none --entitlements "$CLI_ENT" \
-+    "$APP/Contents/MacOS/qemu-vfio-apple"
-+fi
-+
-+echo "Ad-hoc signing DriverKit extension..."
-+codesign --force --sign - --timestamp=none --entitlements "$DEXT_ENT" "$DEXT"
-+
-+echo "Ad-hoc signing host app..."
-+codesign --force --sign - --timestamp=none --entitlements "$APP_ENT" "$APP"
-+
-+codesign --verify --deep --strict --verbose=2 "$APP"
-+codesign --verify --deep --strict --verbose=2 "$DEXT"
-+
-+echo "Build complete: $APP"
-+
-+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-+  echo "app=$APP" >> "$GITHUB_OUTPUT"
-+  echo "dext=$DEXT" >> "$GITHUB_OUTPUT"
-+  echo "notices_dir=$GENERATED_NOTICES" >> "$GITHUB_OUTPUT"
-+fi
-+
-+if [[ "$BUILD_ONLY" == "1" ]]; then
-+  exit 0
-+fi
-+
-+DEST="/Applications/vEGPU Machine.app"
-+echo "Installing to $DEST..."
-+rm -rf "$DEST"
-+ditto "$APP" "$DEST"
-+echo "Installed: $DEST"
-+echo "Open it from /Applications and use the app to activate the DriverKit extension."
 diff --git a/contrib/apple-vfio/scripts/embed-qemu.sh b/contrib/apple-vfio/scripts/embed-qemu.sh
 index 33c4738515e1d074e9701633c878e85513311d8e..03c814a7868e95cf57ccf602a330d3ec9593dccc 100755
 --- a/contrib/apple-vfio/scripts/embed-qemu.sh
@@ -6320,379 +4971,6 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
  EOF
  
  log "wrote notice bundle to: $OUT_DIR"
-diff --git a/contrib/apple-vfio/scripts/update-vegpu-machine-icon.sh b/contrib/apple-vfio/scripts/update-vegpu-machine-icon.sh
-new file mode 100755
-index 0000000000000000000000000000000000000000..52f66031c462e00b6bffcea62b059a033996c24f
---- /dev/null
-+++ b/contrib/apple-vfio/scripts/update-vegpu-machine-icon.sh
-@@ -0,0 +1,27 @@
-+#!/usr/bin/env bash
-+# Modified by OpenResearchTools, 2026-05-26.
-+# SPDX-License-Identifier: GPL-2.0-or-later
-+set -euo pipefail
-+
-+HERE="$(cd "$(dirname "$0")" && pwd)"
-+APPLE_VFIO_DIR="$(cd "$HERE/.." && pwd)"
-+SRC="${1:-$APPLE_VFIO_DIR/Branding/vEGPU-Machine-icon-source.png}"
-+ICONSET="$APPLE_VFIO_DIR/VFIOUserHostApp/Assets.xcassets/AppIcon.appiconset"
-+
-+if [[ ! -f "$SRC" ]]; then
-+  echo "error: source icon not found: $SRC" >&2
-+  exit 1
-+fi
-+
-+mkdir -p "$ICONSET"
-+sips -z 16 16 "$SRC" --out "$ICONSET/icon_16x16.png" >/dev/null
-+sips -z 32 32 "$SRC" --out "$ICONSET/icon_16x16@2x.png" >/dev/null
-+sips -z 32 32 "$SRC" --out "$ICONSET/icon_32x32.png" >/dev/null
-+sips -z 64 64 "$SRC" --out "$ICONSET/icon_32x32@2x.png" >/dev/null
-+sips -z 128 128 "$SRC" --out "$ICONSET/icon_128x128.png" >/dev/null
-+sips -z 256 256 "$SRC" --out "$ICONSET/icon_128x128@2x.png" >/dev/null
-+sips -z 256 256 "$SRC" --out "$ICONSET/icon_256x256.png" >/dev/null
-+sips -z 512 512 "$SRC" --out "$ICONSET/icon_256x256@2x.png" >/dev/null
-+sips -z 512 512 "$SRC" --out "$ICONSET/icon_512x512.png" >/dev/null
-+sips -z 1024 1024 "$SRC" --out "$ICONSET/icon_512x512@2x.png" >/dev/null
-+echo "updated vEGPU Machine app icon assets from $SRC"
-diff --git a/hw/vfio/apple-auto.c b/hw/vfio/apple-auto.c
-new file mode 100644
-index 0000000000000000000000000000000000000000..8a7163015886e83552c608e99c2c27ae338bb751
---- /dev/null
-+++ b/hw/vfio/apple-auto.c
-@@ -0,0 +1,334 @@
-+/*
-+ * SPDX-License-Identifier: GPL-2.0-or-later
-+ *
-+ * QEMU-side auto passthrough for Apple DriverKit VFIO devices.
-+ *
-+ * This pseudo-device intentionally does not ask a helper process for BDFs.
-+ * It enumerates the live VFIOUserPCIDriver-bound PCI functions inside the
-+ * qemu-system-aarch64 process, then creates vfio-apple-pci devices in that
-+ * same process so the DriverKit open/claim happens in the VM owner process.
-+ */
-+
-+/*
-+ * Modified by OpenResearchTools, 2026-05-26.
-+ */
-+
-+#include "qemu/osdep.h"
-+
-+#include "hw/pci/pci.h"
-+#include "hw/pci/pci_bus.h"
-+#include "hw/core/qdev-properties.h"
-+#include "hw/vfio/apple.h"
-+#include "hw/vfio/apple-dext-client.h"
-+#include "hw/vfio/types.h"
-+#include "qapi/error.h"
-+#include "qemu/error-report.h"
-+#include "qemu/units.h"
-+#include "qom/object.h"
-+
-+OBJECT_DECLARE_SIMPLE_TYPE(VFIOAppleAutoPCIDevice, VFIO_APPLE_AUTO_PCI)
-+
-+struct VFIOAppleAutoPCIDevice {
-+    DeviceState parent_obj;
-+    bool dma_companion;
-+    uint64_t dma_bounce_size;
-+    uint8_t guest_slot_start;
-+};
-+
-+typedef struct AppleAutoGroup {
-+    uint8_t bus;
-+    uint8_t device;
-+    uint8_t first_function;
-+    uint8_t guest_slot;
-+    size_t count;
-+    char root[128];
-+} AppleAutoGroup;
-+
-+typedef struct AppleAutoBusSearch {
-+    PCIBus *bus;
-+} AppleAutoBusSearch;
-+
-+static int
-+apple_auto_find_root_pci_bus(Object *child, void *opaque)
-+{
-+    AppleAutoBusSearch *search = opaque;
-+
-+    if (search->bus != NULL) {
-+        return 1;
-+    }
-+
-+    if (object_dynamic_cast(child, TYPE_PCI_BUS) != NULL) {
-+        PCIBus *bus = PCI_BUS(child);
-+
-+        if (pci_bus_is_root(bus)) {
-+            search->bus = bus;
-+            return 1;
-+        }
-+    }
-+
-+    return 0;
-+}
-+
-+static PCIBus *
-+apple_auto_primary_pci_bus(void)
-+{
-+    AppleAutoBusSearch search = { 0 };
-+
-+    object_child_foreach_recursive(object_get_root(),
-+                                   apple_auto_find_root_pci_bus,
-+                                   &search);
-+    return search.bus;
-+}
-+
-+static int
-+apple_dext_bound_device_cmp(const void *ap, const void *bp)
-+{
-+    const AppleDextBoundDevice *a = ap;
-+    const AppleDextBoundDevice *b = bp;
-+    int root_cmp = strcmp(a->root, b->root);
-+
-+    if (root_cmp != 0) {
-+        return root_cmp;
-+    }
-+    if (a->bus != b->bus) {
-+        return (int)a->bus - (int)b->bus;
-+    }
-+    if (a->device != b->device) {
-+        return (int)a->device - (int)b->device;
-+    }
-+    return (int)a->function - (int)b->function;
-+}
-+
-+static int
-+apple_auto_group_for(AppleAutoGroup *groups, size_t group_count,
-+                     const AppleDextBoundDevice *dev)
-+{
-+    for (size_t i = 0; i < group_count; i++) {
-+        if (groups[i].bus == dev->bus &&
-+            groups[i].device == dev->device &&
-+            strcmp(groups[i].root, dev->root) == 0) {
-+            return (int)i;
-+        }
-+    }
-+    return -1;
-+}
-+
-+static bool
-+apple_auto_prepare_groups(const AppleDextBoundDevice *devices, size_t count,
-+                          uint8_t guest_slot_start,
-+                          AppleAutoGroup **out_groups,
-+                          size_t *out_group_count,
-+                          Error **errp)
-+{
-+    AppleAutoGroup *groups = g_new0(AppleAutoGroup, count);
-+    size_t group_count = 0;
-+
-+    for (size_t i = 0; i < count; i++) {
-+        const AppleDextBoundDevice *dev = &devices[i];
-+        int group = apple_auto_group_for(groups, group_count, dev);
-+
-+        if (group < 0) {
-+            if (group_count > guest_slot_start - 1) {
-+                error_setg(errp,
-+                           "too many VFIO PCI slots to auto-place starting at "
-+                           "guest slot 0x%x",
-+                           guest_slot_start);
-+                g_free(groups);
-+                return false;
-+            }
-+
-+            group = (int)group_count++;
-+            groups[group].bus = dev->bus;
-+            groups[group].device = dev->device;
-+            groups[group].first_function = dev->function;
-+            groups[group].guest_slot = guest_slot_start - (uint8_t)group;
-+            groups[group].count = 0;
-+            strncpy(groups[group].root, dev->root,
-+                    sizeof(groups[group].root) - 1);
-+            groups[group].root[sizeof(groups[group].root) - 1] = '\0';
-+        }
-+
-+        groups[group].count++;
-+    }
-+
-+    *out_groups = groups;
-+    *out_group_count = group_count;
-+    return true;
-+}
-+
-+static bool
-+apple_auto_should_attach(const AppleDextBoundDevice *dev)
-+{
-+    /*
-+     * HDMI/DP audio functions on GPUs are not useful for the compute runtime
-+     * and add extra guest drivers/DMA endpoints during early boot. Keep the
-+     * display/compute function for every card, but leave GPU audio on macOS.
-+     */
-+    if ((dev->class_code & 0xffff00) == 0x040300) {
-+        warn_report("vfio-apple-auto-pci: skipping GPU audio function "
-+                    "%02x:%02x.%x@%s vendor=%04x device=%04x",
-+                    dev->bus, dev->device, dev->function,
-+                    dev->root[0] ? dev->root : "?",
-+                    dev->vendor_id, dev->device_id);
-+        return false;
-+    }
-+
-+    return true;
-+}
-+
-+static bool
-+apple_auto_create_one(PCIBus *bus, const VFIOAppleAutoPCIDevice *auto_dev,
-+                      const AppleDextBoundDevice *dev,
-+                      const AppleAutoGroup *group,
-+                      Error **errp)
-+{
-+    g_autofree char *host_bdf = NULL;
-+    PCIDevice *pci_dev;
-+    Object *obj;
-+    uint8_t guest_function = dev->function - group->first_function;
-+    bool multifunction = group->count > 1 && guest_function == 0;
-+
-+    if (guest_function > 7) {
-+        error_setg(errp,
-+                   "host slot %02x:%02x under root '%s' spans more than 8 "
-+                   "functions; cannot map to one guest multifunction slot",
-+                   dev->bus, dev->device,
-+                   group->root[0] ? group->root : "?");
-+        return false;
-+    }
-+
-+    pci_dev = multifunction
-+        ? pci_new_multifunction(PCI_DEVFN(group->guest_slot, guest_function),
-+                                TYPE_VFIO_APPLE_PCI)
-+        : pci_new(PCI_DEVFN(group->guest_slot, guest_function),
-+                  TYPE_VFIO_APPLE_PCI);
-+    obj = OBJECT(pci_dev);
-+
-+    host_bdf = g_strdup_printf("%02x:%02x.%x",
-+                               dev->bus, dev->device, dev->function);
-+    if (!object_property_set_str(obj, "host", host_bdf, errp) ||
-+        !object_property_set_bool(obj, "dma-companion",
-+                                  auto_dev->dma_companion, errp) ||
-+        !object_property_set_uint(obj, "dma-bounce-size",
-+                                  auto_dev->dma_bounce_size, errp) ||
-+        !object_property_set_int(obj, "rombar", 0, errp)) {
-+        object_unref(obj);
-+        return false;
-+    }
-+
-+    if (dev->root[0] != '\0' &&
-+        !object_property_set_str(obj, "host-root", dev->root, errp)) {
-+        object_unref(obj);
-+        return false;
-+    }
-+
-+    info_report("vfio-apple-auto-pci: attaching %s@%s vendor=%04x "
-+                "device=%04x class=%06x (%s) as guest %02x:%02x.%x",
-+                host_bdf, dev->root[0] ? dev->root : "?",
-+                dev->vendor_id, dev->device_id, dev->class_code,
-+                dev->name, 0, group->guest_slot, guest_function);
-+    return pci_realize_and_unref(pci_dev, bus, errp);
-+}
-+
-+static void
-+vfio_apple_auto_pci_realize(DeviceState *dev, Error **errp)
-+{
-+    VFIOAppleAutoPCIDevice *auto_dev = VFIO_APPLE_AUTO_PCI(dev);
-+    g_autofree AppleAutoGroup *groups = NULL;
-+    AppleDextBoundDevice *bound = NULL;
-+    size_t bound_count = 0;
-+    size_t group_count = 0;
-+    g_autofree char *enum_err = NULL;
-+    PCIBus *bus;
-+
-+    bus = apple_auto_primary_pci_bus();
-+    if (bus == NULL) {
-+        error_setg(errp, "vfio-apple-auto-pci: no PCI bus is available");
-+        return;
-+    }
-+
-+    if (!apple_dext_copy_bound_devices(&bound, &bound_count, &enum_err)) {
-+        error_setg(errp, "vfio-apple-auto-pci: %s",
-+                   enum_err ? enum_err : "failed to enumerate VFIO devices");
-+        return;
-+    }
-+
-+    if (bound_count == 0) {
-+        warn_report("vfio-apple-auto-pci: no VFIOUserPCIDriver-bound PCI "
-+                    "functions found; booting without passthrough devices");
-+        return;
-+    }
-+
-+    qsort(bound, bound_count, sizeof(bound[0]), apple_dext_bound_device_cmp);
-+
-+    size_t attach_count = 0;
-+    for (size_t i = 0; i < bound_count; i++) {
-+        if (apple_auto_should_attach(&bound[i])) {
-+            if (attach_count != i) {
-+                bound[attach_count] = bound[i];
-+            }
-+            attach_count++;
-+        }
-+    }
-+
-+    if (attach_count == 0) {
-+        warn_report("vfio-apple-auto-pci: no attachable PCI functions after "
-+                    "filtering; booting without passthrough devices");
-+        apple_dext_free_bound_devices(bound);
-+        return;
-+    }
-+
-+    if (!apple_auto_prepare_groups(bound, attach_count,
-+                                   auto_dev->guest_slot_start,
-+                                   &groups, &group_count, errp)) {
-+        apple_dext_free_bound_devices(bound);
-+        return;
-+    }
-+
-+    for (size_t i = 0; i < attach_count; i++) {
-+        int group_index = apple_auto_group_for(groups, group_count, &bound[i]);
-+
-+        if (group_index < 0 ||
-+            !apple_auto_create_one(bus, auto_dev, &bound[i],
-+                                   &groups[group_index], errp)) {
-+            apple_dext_free_bound_devices(bound);
-+            return;
-+        }
-+    }
-+
-+    apple_dext_free_bound_devices(bound);
-+}
-+
-+static const Property vfio_apple_auto_pci_properties[] = {
-+    DEFINE_PROP_BOOL("dma-companion", VFIOAppleAutoPCIDevice,
-+                     dma_companion, true),
-+    DEFINE_PROP_SIZE("dma-bounce-size", VFIOAppleAutoPCIDevice,
-+                     dma_bounce_size, 64 * MiB),
-+    DEFINE_PROP_UINT8("guest-slot-start", VFIOAppleAutoPCIDevice,
-+                      guest_slot_start, 0x1e),
-+};
-+
-+static void
-+vfio_apple_auto_pci_class_init(ObjectClass *klass, const void *data)
-+{
-+    DeviceClass *dc = DEVICE_CLASS(klass);
-+
-+    dc->realize = vfio_apple_auto_pci_realize;
-+    device_class_set_props(dc, vfio_apple_auto_pci_properties);
-+    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
-+}
-+
-+static const TypeInfo vfio_apple_auto_pci_info = {
-+    .name = TYPE_VFIO_APPLE_AUTO_PCI,
-+    .parent = TYPE_DEVICE,
-+    .instance_size = sizeof(VFIOAppleAutoPCIDevice),
-+    .class_init = vfio_apple_auto_pci_class_init,
-+};
-+
-+static void
-+register_vfio_apple_auto_pci_type(void)
-+{
-+    type_register_static(&vfio_apple_auto_pci_info);
-+}
-+
-+type_init(register_vfio_apple_auto_pci_type)
 diff --git a/hw/vfio/apple-device.c b/hw/vfio/apple-device.c
 index bab864006a2d35fb5c66634434ba2ed048977629..f62c6d9f2d6ef756ed8458a5e420a4e4a05c2d17 100644
 --- a/hw/vfio/apple-device.c
