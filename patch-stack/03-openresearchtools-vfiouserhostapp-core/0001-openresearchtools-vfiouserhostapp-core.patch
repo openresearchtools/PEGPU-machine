@@ -263,10 +263,10 @@ index 0000000000000000000000000000000000000000..7a48088fd8fd63764049b875bdbe955d
 +echo "Built guest driver bundle in $OUT_DIR"
 diff --git a/contrib/apple-dma/scripts/merge-guest-driver-bundles.sh b/contrib/apple-dma/scripts/merge-guest-driver-bundles.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..b13c00542cdf73f77410b66899043d79bf14b2e6
+index 0000000000000000000000000000000000000000..b23446ab9330416c1c758fdd94c302dcf79a49e1
 --- /dev/null
 +++ b/contrib/apple-dma/scripts/merge-guest-driver-bundles.sh
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,163 @@
 +#!/usr/bin/env bash
 +# Modified by OpenResearchTools, 2026-05-26.
 +# SPDX-License-Identifier: GPL-2.0-or-later
@@ -351,10 +351,29 @@ index 0000000000000000000000000000000000000000..b13c00542cdf73f77410b66899043d79
 +        result.append(entry)
 +    return result
 +
-+for part in parts:
++def manifest_roots(inputs):
++    roots = []
++    seen = set()
++
++    def add(root: Path) -> None:
++        if root in seen:
++            return
++        if (root / "manifest.json").is_file():
++            seen.add(root)
++            roots.append(root)
++
++    for part in inputs:
++        if part.is_file():
++            continue
++        add(part)
++        if part.is_dir():
++            for child in sorted(part.iterdir()):
++                if child.is_dir():
++                    add(child)
++    return roots
++
++for part in manifest_roots(parts):
 +    manifest_path = part / "manifest.json"
-+    if not manifest_path.is_file():
-+        continue
 +    with manifest_path.open("r", encoding="utf-8") as f:
 +        manifest = json.load(f)
 +    manifests.append(manifest)
