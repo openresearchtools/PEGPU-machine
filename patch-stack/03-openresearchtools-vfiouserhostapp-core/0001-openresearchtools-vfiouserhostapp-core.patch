@@ -5118,11 +5118,11 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
  log "preparing output directory: $OUT_DIR"
  rm -rf "$OUT_DIR"
 -mkdir -p "$LICENSE_DIR/qemu" "$LICENSE_DIR/edk2"
-+mkdir -p "$LICENSE_DIR/qemu" "$LICENSE_DIR/edk2" "$LICENSE_DIR/apple-dma"
++mkdir -p "$LICENSE_DIR/qemu" "$LICENSE_DIR/edk2" "$LICENSE_DIR/apple-dma" "$LICENSE_DIR/pci.ids"
  
  log "copying local qemu/edk2 license material"
  cp "$REPO_ROOT/COPYING" "$LICENSE_DIR/qemu/COPYING"
-@@ -77,9 +173,80 @@ Releases: https://github.com/tianocore/edk2/releases
+@@ -77,9 +173,123 @@ Releases: https://github.com/tianocore/edk2/releases
  Notes: The bundled firmware images are described by pc-bios/edk2-licenses.txt.
  EOF
  
@@ -5133,6 +5133,49 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +Source-Path: contrib/apple-dma/linux
 +Package-Builder: contrib/apple-dma/scripts/build-guest-driver-bundle.sh
 +Notes: Guest-driver packages are built from the apple-dma source files in this source tree.
++EOF
++
++cat > "$LICENSE_DIR/pci.ids/BSD-3-Clause.txt" <<'EOF'
++Copyright (C) 2003-2026 Martin Mares <mj@ucw.cz>
++Copyright (C) 2003-2026 Albert Pool
++
++Redistribution and use in source and binary forms, with or without
++modification, are permitted provided that the following conditions are met:
++
++1. Redistributions of source code must retain the above copyright notice, this
++   list of conditions and the following disclaimer.
++
++2. Redistributions in binary form must reproduce the above copyright notice,
++   this list of conditions and the following disclaimer in the documentation
++   and/or other materials provided with the distribution.
++
++3. Neither the name of the copyright holder nor the names of contributors may
++   be used to endorse or promote products derived from this software without
++   specific prior written permission.
++
++THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
++ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
++WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
++DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
++FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
++SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
++CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
++OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++EOF
++cat > "$LICENSE_DIR/pci.ids/SOURCE_INFO.txt" <<'EOF'
++Component: pci.ids PCI ID database
++Source-Type: bundled-data-file
++Source-Path: Contents/Resources/pci.ids
++Source-Bundle-Path: bundled-data/pci.ids
++Source-Repository: https://github.com/pciutils/pciids
++Source-Database: https://pci-ids.ucw.cz/
++Fetch-Script: contrib/apple-vfio/scripts/fetch-pci-ids.sh
++Default-Source-URL: https://pci-ids.ucw.cz/v2.2/pci.ids
++License-Metadata: GPL-2.0-or-later OR BSD-3-Clause
++Selected-License: BSD-3-Clause
++Notes: pci.ids is a downloaded data file bundled verbatim for PCI vendor/device name lookup. It is not compiled; the bundled pci.ids file is the corresponding source form for this data dependency.
 +EOF
 +
 +copy_qemu_subproject_license_files() {
@@ -5203,7 +5246,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
  import json
  import os
  import pathlib
-@@ -89,21 +256,100 @@ import subprocess
+@@ -89,21 +299,100 @@ import subprocess
  import sys
  import tarfile
  import time
@@ -5304,7 +5347,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
      {
          "key": "libslirp",
          "formula": "libslirp",
-@@ -118,6 +364,15 @@ deps = [
+@@ -118,6 +407,15 @@ deps = [
              "LICENSES/LGPL-2.1-or-later.txt",
          ],
      },
@@ -5320,7 +5363,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
      {
          "key": "gmp",
          "formula": "gmp",
-@@ -195,6 +450,43 @@ deps = [
+@@ -195,6 +493,43 @@ deps = [
          "formula": "pixman",
          "files": ["COPYING"],
      },
@@ -5364,7 +5407,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
      {
          "key": "libpng",
          "formula": "libpng",
-@@ -234,6 +526,13 @@ deps = [
+@@ -234,6 +569,13 @@ deps = [
              "LICENSE",
          ],
      },
@@ -5378,7 +5421,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
  ]
  
  
-@@ -242,38 +541,136 @@ def report(message: str) -> None:
+@@ -242,38 +584,136 @@ def report(message: str) -> None:
  
  
  def fetch_bytes(url: str, label: str) -> bytes:
@@ -5541,7 +5584,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
  def member_relpath(name: str) -> str:
      parts = name.split("/", 1)
      return parts[1] if len(parts) == 2 else parts[0]
-@@ -306,11 +703,28 @@ def resolve_member(archive: tarfile.TarFile, member: tarfile.TarInfo) -> Optiona
+@@ -306,11 +746,28 @@ def resolve_member(archive: tarfile.TarFile, member: tarfile.TarInfo) -> Optiona
  
  
  for index, dep in enumerate(deps, start=1):
@@ -5574,7 +5617,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
  
      target_dir = license_root / dep["key"]
      target_dir.mkdir(parents=True, exist_ok=True)
-@@ -352,68 +766,239 @@ for index, dep in enumerate(deps, start=1):
+@@ -352,68 +809,254 @@ for index, dep in enumerate(deps, start=1):
      report(f"[{index}/{len(deps)}] writing metadata for {dep['key']}")
      with open(target_dir / "SOURCE_INFO.txt", "w", encoding="utf-8") as out:
          out.write(f"Component: {dep['key']}\n")
@@ -5679,6 +5722,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +    ("edk2 firmware images", "edk2", ["edk2-licenses.txt", "License.txt"]),
 +    ("iPXE virtio option ROM", "ipxe", ["COPYING", "COPYING.GPLv2", "COPYING.UBDL"]),
 +    ("apple-dma guest driver", "apple-dma", ["GPL-2.0.txt"]),
++    ("pci.ids PCI ID database", "pci.ids", ["BSD-3-Clause.txt"]),
 +    ("QEMU subproject: Berkeley SoftFloat 3", "qemu-subprojects/berkeley-softfloat-3", ["COPYING.txt"]),
 +    ("QEMU subproject: Berkeley TestFloat 3", "qemu-subprojects/berkeley-testfloat-3", ["COPYING.txt"]),
 +    ("QEMU subproject: Device Tree Compiler", "qemu-subprojects/dtc", ["BSD-2-Clause", "GPL", "README.license"]),
@@ -5723,6 +5767,12 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +    out.write("the source license file copied into this notice bundle, and the ")
 +    out.write("full license or notice text between BEGIN LICENSE and END LICENSE ")
 +    out.write("markers.\n\n")
++    out.write("The source tree produced by applying the vEGPU Machine patch stack ")
++    out.write("to the recorded QEMU base is QEMU-derived. QEMU as a whole is ")
++    out.write("released under the GNU General Public License, version 2. ")
++    out.write("Individual files and bundled components may carry more specific ")
++    out.write("GPL, LGPL, BSD-style, MIT-style, UBDL, or other compatible notices; ")
++    out.write("those file-level and component-level notices remain authoritative.\n\n")
 +
 +    for display, key, files in packages:
 +        for relpath in files:
@@ -5836,6 +5886,12 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +are retained where present. Files added by OpenResearchTools keep the license
 +notices present in those source files.
 +
++The source tree produced by applying this patch stack to the recorded QEMU base
++is QEMU-derived. QEMU as a whole is released under GPL version 2. Individual
++files and bundled components may carry more specific GPL, LGPL, BSD-style,
++MIT-style, UBDL, or other compatible notices; those file-level and
++component-level notices remain authoritative.
++
 +Corresponding Source Bundle
 +---------------------------
 +
@@ -5849,6 +5905,8 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +- fetched third-party source archives and dependency recipe metadata under
 +  third-party-sources/, with SHA256SUMS when SOURCE_ARCHIVE_DIR was used
 +  during notice generation
++- the bundled pci.ids data file under bundled-data/pci.ids; it is a verbatim
++  data file, not a separate compilable source archive
 +- this notice bundle under ThirdPartyNotices/
 +
 +Notice Files
@@ -5867,7 +5925,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
  
  EOF
  
-@@ -426,229 +1011,336 @@ if [ -d "$DIST_DIR/lib" ] || [ -f "$DIST_DIR/qemu-system-aarch64" ] || [ -d "$DI
+@@ -426,229 +1069,350 @@ if [ -d "$DIST_DIR/lib" ] || [ -f "$DIST_DIR/qemu-system-aarch64" ] || [ -d "$DI
          printf -- "\n### Firmware and data payload\n\n"
          artifact_lines "$DIST_DIR/share/qemu/*"
          printf -- "\n"
@@ -5945,6 +6003,20 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +- Upstream source:
 +  - <https://ipxe.org/>
 +  - <https://gitlab.com/qemu-project/ipxe>
++
++### pci.ids PCI ID database
++
++- Release payload entries (when present):
++  - `pci.ids`
++- Purpose: downloaded runtime data file used by `qemu-vfio-apple list-devices`
++  for PCI vendor/device names.
++- License: `GPL-2.0-or-later OR BSD-3-Clause`; vEGPU Machine uses the
++  BSD-3-Clause option for this bundled data file.
++- License text: see LICENSES.
++- Source metadata: source artifact `notice-generator-output/license-files/pci.ids/SOURCE_INFO.txt`
++- Upstream source:
++  - <https://github.com/pciutils/pciids>
++  - <https://pci-ids.ucw.cz/>
 +
 +### apple-dma guest driver
 +

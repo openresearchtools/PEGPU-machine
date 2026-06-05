@@ -642,6 +642,7 @@ jobs:
           test -f "$APP/Contents/Resources/share/qemu/edk2-arm-vars.fd"
           test ! -d "$APP/Contents/MacOS/libexec"
           test -f "$APP/Contents/Resources/share/qemu/efi-virtio.rom"
+          test -f "$APP/Contents/Resources/pci.ids"
           test ! -e "$APP/Contents/Resources/share/qemu/npcm7xx_bootrom.bin"
           test ! -e "$APP/Contents/Resources/share/qemu/npcm8xx_bootrom.bin"
           test ! -e "$APP/Contents/Resources/share/qemu/ast27x0_bootrom.bin"
@@ -669,6 +670,9 @@ jobs:
           test -f "$GENERATED_NOTICES/license-files/qemu/COPYING"
           test ! -e "$GENERATED_NOTICES/license-files/qemu/$(printf 'pc-bios-%s' README)"
           test -f "$GENERATED_NOTICES/license-files/apple-dma/GPL-2.0.txt"
+          test -f "$GENERATED_NOTICES/license-files/pci.ids/BSD-3-Clause.txt"
+          test -f "$GENERATED_NOTICES/license-files/pci.ids/SOURCE_INFO.txt"
+          grep -F 'Source-Bundle-Path: bundled-data/pci.ids' "$GENERATED_NOTICES/license-files/pci.ids/SOURCE_INFO.txt"
           test -f "$GENERATED_NOTICES/license-files/edk2/License.txt"
           test -f "$GENERATED_NOTICES/license-files/libressl/COPYING"
           test ! -e "$GENERATED_NOTICES/license-files/openssl"
@@ -702,6 +706,8 @@ jobs:
           grep -F 'Acknowledgements and Independence' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
           grep -F 'https://github.com/scottjg/qemu-vfio-apple' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
           grep -F 'https://github.com/utmapp/qemu' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
+          grep -F 'https://github.com/pciutils/pciids' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
+          grep -F 'Package/Dependency: pci.ids PCI ID database' "$APP/Contents/Resources/ThirdPartyNotices/LICENSES"
           grep -F 'not endorsed by, sponsored by' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
           FORBIDDEN_DOMAIN="$(printf '%s.%s' openresearch tools)"
           BAD_NOTICE_RE='Release[-]specific[[:space:]]+reminder|Before[[:space:]]+publishing|Bundled[[:space:]]+artifacts[[:space:]]+seen|Runtime[[:space:]]+Notice[[:space:]]+Bundle|package[[:space:]]+metadata|source[[:space:]]+revision|/Users/[^[:space:]]+|/home/[^[:space:]]+'
@@ -844,6 +850,7 @@ jobs:
           zipinfo -1 "$ZIP_PATH" | grep -Fx 'vEGPU Machine.app/Contents/Resources/ThirdPartyNotices/NOTICES'
           zipinfo -1 "$ZIP_PATH" | grep -Fx 'vEGPU Machine.app/Contents/Resources/ThirdPartyNotices/LICENSES'
           zipinfo -1 "$ZIP_PATH" | grep -Fx 'vEGPU Machine.app/Contents/Resources/manifest.json'
+          zipinfo -1 "$ZIP_PATH" | grep -Fx 'vEGPU Machine.app/Contents/Resources/pci.ids'
           if zipinfo -1 "$ZIP_PATH" | grep -E '^THIRD_PARTY_NOTICES/'; then
             echo "release zip must not ship a root-level THIRD_PARTY_NOTICES sidecar" >&2
             exit 1
@@ -902,6 +909,8 @@ jobs:
           ditto "$APP/Contents/Resources/ThirdPartyNotices" "$SOURCE_BUNDLE/THIRD_PARTY_NOTICES"
           ditto "$GENERATED_NOTICES" "$SOURCE_BUNDLE/notice-generator-output"
           cp "$APP/Contents/Resources/manifest.json" "$SOURCE_BUNDLE/APP_MANIFEST.json"
+          mkdir -p "$SOURCE_BUNDLE/bundled-data"
+          cp "$APP/Contents/Resources/pci.ids" "$SOURCE_BUNDLE/bundled-data/pci.ids"
           test -d "$SOURCE_INPUTS"
           ditto "$SOURCE_INPUTS" "$SOURCE_BUNDLE/third-party-sources"
           PATCH_STACK_DIR="${PATCH_STACK_DIR:-patch-stack}"
@@ -925,6 +934,7 @@ jobs:
           - qemu-subprojects/: QEMU Meson subproject sources downloaded for this build.
           - patch-stack/: ordered source patch files and patch-local binary assets referenced by THIRD_PARTY_NOTICES/NOTICES.
           - third-party-sources/: upstream source archives and dependency recipe metadata fetched for bundled runtime dependencies, with SHA256SUMS.
+          - bundled-data/pci.ids: verbatim PCI ID database data file embedded in the app; see notice-generator-output/license-files/pci.ids/SOURCE_INFO.txt.
           - THIRD_PARTY_NOTICES/: copy of the two notice files embedded in the application.
           - notice-generator-output/: raw generated notice inputs, including extracted upstream license files and SOURCE_INFO metadata used to assemble LICENSES.
           - APP_MANIFEST.json: copy of the app-embedded release manifest used for update/install checks.
@@ -962,8 +972,13 @@ jobs:
           test -f "$SOURCE_BUNDLE/notice-generator-output/LICENSES"
           test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/qemu/COPYING"
           test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/apple-dma/GPL-2.0.txt"
+          test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/pci.ids/BSD-3-Clause.txt"
+          test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/pci.ids/SOURCE_INFO.txt"
+          grep -F 'Source-Bundle-Path: bundled-data/pci.ids' "$SOURCE_BUNDLE/notice-generator-output/license-files/pci.ids/SOURCE_INFO.txt"
           test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/libressl/COPYING"
           test ! -e "$SOURCE_BUNDLE/notice-generator-output/license-files/openssl"
+          test -f "$SOURCE_BUNDLE/bundled-data/pci.ids"
+          grep -F '3-clause BSD License' "$SOURCE_BUNDLE/bundled-data/pci.ids"
           test -f "$SOURCE_BUNDLE/third-party-sources/SHA256SUMS"
           test -f "$SOURCE_BUNDLE/third-party-sources/edk2/SOURCE_RECIPE.txt"
           test -f "$SOURCE_BUNDLE/third-party-sources/edk2/edk2-4dfdca63a93497203f197ec98ba20e2327e4afe4.tar.gz"
