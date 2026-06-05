@@ -669,6 +669,9 @@ jobs:
           test -d "$GENERATED_NOTICES/license-files"
           test -f "$GENERATED_NOTICES/license-files/qemu/COPYING"
           test ! -e "$GENERATED_NOTICES/license-files/qemu/$(printf 'pc-bios-%s' README)"
+          test -f "$GENERATED_NOTICES/license-files/machine-integration/GPL-2.0.txt"
+          test -f "$GENERATED_NOTICES/license-files/machine-integration/SOURCE_INFO.txt"
+          grep -F 'Runtime-Payloads: Contents/MacOS/vEGPU Machine; Contents/MacOS/qemu-vfio-apple; Contents/Library/SystemExtensions/com.vegpu.machine.VFIOUserPCIDriver.dext' "$GENERATED_NOTICES/license-files/machine-integration/SOURCE_INFO.txt"
           test -f "$GENERATED_NOTICES/license-files/apple-dma/GPL-2.0.txt"
           test -f "$GENERATED_NOTICES/license-files/pci.ids/BSD-3-Clause.txt"
           test -f "$GENERATED_NOTICES/license-files/pci.ids/SOURCE_INFO.txt"
@@ -707,6 +710,15 @@ jobs:
           grep -F 'https://github.com/scottjg/qemu-vfio-apple' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
           grep -F 'https://github.com/utmapp/qemu' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
           grep -F 'https://github.com/pciutils/pciids' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
+          grep -F 'Contents/Library/SystemExtensions/com.vegpu.machine.VFIOUserPCIDriver.dext' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
+          grep -F 'Package/Dependency: vEGPU Machine GPL-side host, qemu-vfio-apple, and DriverKit integration' "$APP/Contents/Resources/ThirdPartyNotices/LICENSES"
+          python3 - "$APP/Contents/Resources/ThirdPartyNotices/NOTICES" <<'PY'
+          import sys
+          text = open(sys.argv[1], encoding="utf-8").read()
+          needle = "License: `GPL-2.0-or-later OR BSD-3-Clause`; vEGPU Machine uses the"
+          if text.count(needle) != 1:
+              raise SystemExit(f"expected exactly one pci.ids selected-license sentence, found {text.count(needle)}")
+          PY
           grep -F 'Package/Dependency: pci.ids PCI ID database' "$APP/Contents/Resources/ThirdPartyNotices/LICENSES"
           grep -F 'not endorsed by, sponsored by' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
           FORBIDDEN_DOMAIN="$(printf '%s.%s' openresearch tools)"
@@ -971,6 +983,10 @@ jobs:
           test -f "$SOURCE_BUNDLE/notice-generator-output/NOTICES"
           test -f "$SOURCE_BUNDLE/notice-generator-output/LICENSES"
           test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/qemu/COPYING"
+          test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/machine-integration/GPL-2.0.txt"
+          test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/machine-integration/SOURCE_INFO.txt"
+          grep -F 'Contents/Library/SystemExtensions/com.vegpu.machine.VFIOUserPCIDriver.dext' "$SOURCE_BUNDLE/THIRD_PARTY_NOTICES/NOTICES"
+          grep -F 'Package/Dependency: vEGPU Machine GPL-side host, qemu-vfio-apple, and DriverKit integration' "$SOURCE_BUNDLE/THIRD_PARTY_NOTICES/LICENSES"
           test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/apple-dma/GPL-2.0.txt"
           test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/pci.ids/BSD-3-Clause.txt"
           test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/pci.ids/SOURCE_INFO.txt"

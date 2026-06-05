@@ -5118,14 +5118,25 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
  log "preparing output directory: $OUT_DIR"
  rm -rf "$OUT_DIR"
 -mkdir -p "$LICENSE_DIR/qemu" "$LICENSE_DIR/edk2"
-+mkdir -p "$LICENSE_DIR/qemu" "$LICENSE_DIR/edk2" "$LICENSE_DIR/apple-dma" "$LICENSE_DIR/pci.ids"
++mkdir -p "$LICENSE_DIR/qemu" "$LICENSE_DIR/edk2" "$LICENSE_DIR/machine-integration" "$LICENSE_DIR/apple-dma" "$LICENSE_DIR/pci.ids"
  
  log "copying local qemu/edk2 license material"
  cp "$REPO_ROOT/COPYING" "$LICENSE_DIR/qemu/COPYING"
-@@ -77,9 +173,123 @@ Releases: https://github.com/tianocore/edk2/releases
+@@ -77,9 +173,134 @@ Releases: https://github.com/tianocore/edk2/releases
  Notes: The bundled firmware images are described by pc-bios/edk2-licenses.txt.
  EOF
  
++cp "$REPO_ROOT/COPYING" "$LICENSE_DIR/machine-integration/GPL-2.0.txt"
++cat > "$LICENSE_DIR/machine-integration/SOURCE_INFO.txt" <<'EOF'
++Component: vEGPU Machine GPL-side host, launcher, and DriverKit integration
++Runtime-Payloads: Contents/MacOS/vEGPU Machine; Contents/MacOS/qemu-vfio-apple; Contents/Library/SystemExtensions/com.vegpu.machine.VFIOUserPCIDriver.dext
++Source-Type: QEMU-derived patch-stack sources
++Source-Bundle-Paths: patch-stack/01-scottjg-qemu-vfio-apple-wip/0001-scottjg-qemu-vfio-apple-wip.patch; patch-stack/03-openresearchtools-vfiouserhostapp-core/0001-openresearchtools-vfiouserhostapp-core.patch
++Source-Components: contrib/apple-vfio/VFIOUserHostApp; contrib/apple-vfio/qemu-vfio-apple; contrib/apple-vfio/VFIOUserPCIDriver
++License-Metadata: GPL-2.0-or-later source-file notices in the QEMU-derived patch stack; QEMU as a whole remains GPL-2.0.
++Notes: This block covers the GPL-side Machine host app integration, qemu-vfio-apple launcher, and DriverKit PCI user driver payloads installed inside vEGPU Machine.app. File-level SPDX identifiers and copyright notices in the reconstructed source tree remain authoritative.
++EOF
++
 +cp "$REPO_ROOT/COPYING" "$LICENSE_DIR/apple-dma/GPL-2.0.txt"
 +cat > "$LICENSE_DIR/apple-dma/SOURCE_INFO.txt" <<'EOF'
 +Component: apple-dma guest driver
@@ -5617,7 +5628,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
  
      target_dir = license_root / dep["key"]
      target_dir.mkdir(parents=True, exist_ok=True)
-@@ -352,68 +809,254 @@ for index, dep in enumerate(deps, start=1):
+@@ -352,68 +809,263 @@ for index, dep in enumerate(deps, start=1):
      report(f"[{index}/{len(deps)}] writing metadata for {dep['key']}")
      with open(target_dir / "SOURCE_INFO.txt", "w", encoding="utf-8") as out:
          out.write(f"Component: {dep['key']}\n")
@@ -5721,6 +5732,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +    ("QEMU", "qemu", ["COPYING"]),
 +    ("edk2 firmware images", "edk2", ["edk2-licenses.txt", "License.txt"]),
 +    ("iPXE virtio option ROM", "ipxe", ["COPYING", "COPYING.GPLv2", "COPYING.UBDL"]),
++    ("vEGPU Machine GPL-side host, qemu-vfio-apple, and DriverKit integration", "machine-integration", ["GPL-2.0.txt", "SOURCE_INFO.txt"]),
 +    ("apple-dma guest driver", "apple-dma", ["GPL-2.0.txt"]),
 +    ("pci.ids PCI ID database", "pci.ids", ["BSD-3-Clause.txt"]),
 +    ("QEMU subproject: Berkeley SoftFloat 3", "qemu-subprojects/berkeley-softfloat-3", ["COPYING.txt"]),
@@ -5761,8 +5773,8 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +]
 +
 +with output.open("w", encoding="utf-8") as out:
-+    out.write("vEGPU Machine Third-Party Licenses\n")
-+    out.write("================================\n\n")
++    out.write("vEGPU Machine Licenses\n")
++    out.write("======================\n\n")
 +    out.write("Each package/dependency block below contains the package name, ")
 +    out.write("the source license file copied into this notice bundle, and the ")
 +    out.write("full license or notice text between BEGIN LICENSE and END LICENSE ")
@@ -5922,10 +5934,18 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +source metadata under notice-generator-output/license-files/.
 +
 +## Bundled runtime payload
++
++### Machine host, launcher, and DriverKit payload
++
++- `Contents/MacOS/vEGPU Machine`
++- `Contents/MacOS/qemu-vfio-apple`
++- `Contents/Library/SystemExtensions/com.vegpu.machine.VFIOUserPCIDriver.dext`
++- License/notice: GPL-side QEMU-derived source layer; see LICENSES.
++- Source metadata: `notice-generator-output/license-files/machine-integration/SOURCE_INFO.txt`
  
  EOF
  
-@@ -426,229 +1069,350 @@ if [ -d "$DIST_DIR/lib" ] || [ -f "$DIST_DIR/qemu-system-aarch64" ] || [ -d "$DI
+@@ -426,229 +1069,361 @@ if [ -d "$DIST_DIR/lib" ] || [ -f "$DIST_DIR/qemu-system-aarch64" ] || [ -d "$DI
          printf -- "\n### Firmware and data payload\n\n"
          artifact_lines "$DIST_DIR/share/qemu/*"
          printf -- "\n"
@@ -5957,6 +5977,17 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +
 +cat >> "$OUT_DIR/NOTICES" <<'EOF'
  ## Component notices
++
++### vEGPU Machine GPL-side host, launcher, and DriverKit integration
++
++- Release payload entries (when present):
++  - `Contents/MacOS/vEGPU Machine`
++  - `Contents/MacOS/qemu-vfio-apple`
++  - `Contents/Library/SystemExtensions/com.vegpu.machine.VFIOUserPCIDriver.dext`
++- License/notice: GPL-side QEMU-derived source layer. File-level SPDX identifiers
++  and copyright notices remain authoritative.
++- License text: see LICENSES.
++- Source metadata: source artifact `notice-generator-output/license-files/machine-integration/SOURCE_INFO.txt`
  
  ### QEMU
  
