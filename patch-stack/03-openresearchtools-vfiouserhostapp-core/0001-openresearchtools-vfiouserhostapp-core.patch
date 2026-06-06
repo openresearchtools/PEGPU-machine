@@ -151,7 +151,7 @@ index 0000000000000000000000000000000000000000..7a48088fd8fd63764049b875bdbe955d
 +Architecture: all
 +Depends: dkms, build-essential, kmod
 +Maintainer: openresearchtools <no-reply@openresearchtools.com>
-+Description: vEGPU guest DMA companion driver source
++Description: PEGPU guest DMA companion driver source
 + DKMS package for the guest-side apple_dma module used with the
 + vfio-apple QEMU passthrough device.
 +EOF
@@ -202,7 +202,7 @@ index 0000000000000000000000000000000000000000..7a48088fd8fd63764049b875bdbe955d
 +    '{
 +      manifestVersion: 1,
 +      id: $id,
-+      createdBy: "vEGPU GitHub Actions guest-tools workflow",
++      createdBy: "PEGPU GitHub Actions guest-tools workflow",
 +      debian: {
 +        name: ($id + ".qcow2"),
 +        url: $imageUrl,
@@ -239,9 +239,9 @@ index 0000000000000000000000000000000000000000..7a48088fd8fd63764049b875bdbe955d
 +create_reproducible_tar_gz "$SOURCE_COPY" "$BUNDLE_ROOT/source/apple-dma-$DRIVER_VERSION.tar.gz"
 +
 +cat >"$BUNDLE_ROOT/README.txt" <<EOF
-+vEGPU guest tools for $IMAGE_ID
++PEGPU guest tools for $IMAGE_ID
 +
-+This bundle contains the guest-side apple_dma DKMS source package. vEGPU
++This bundle contains the guest-side apple_dma DKMS source package. PEGPU
 +syncs this manifest and package over SSH after
 +the cloud-init seed brings up the base VM; this artifact does not contain
 +a modified Debian image.
@@ -256,8 +256,8 @@ index 0000000000000000000000000000000000000000..7a48088fd8fd63764049b875bdbe955d
 +cp -R "$BUNDLE_ROOT/packages" "$OUT_DIR/packages"
 +cp -R "$BUNDLE_ROOT/source" "$OUT_DIR/source"
 +
-+create_reproducible_tar_gz "$BUNDLE_ROOT" "$OUT_DIR/vegpu-guest-driver-bundle.tar.gz"
-+sha512sum "$OUT_DIR"/vegpu-guest-driver-bundle.tar.gz "$OUT_DIR"/manifest.json >"$OUT_DIR/SHA512SUMS"
++create_reproducible_tar_gz "$BUNDLE_ROOT" "$OUT_DIR/pegpu-guest-driver-bundle.tar.gz"
++sha512sum "$OUT_DIR"/pegpu-guest-driver-bundle.tar.gz "$OUT_DIR"/manifest.json >"$OUT_DIR/SHA512SUMS"
 +rm -rf "$WORK_DIR"
 +
 +echo "Built guest driver bundle in $OUT_DIR"
@@ -402,7 +402,7 @@ index 0000000000000000000000000000000000000000..95b41f24a427b88b247cb45beb9cfefb
 +merged = {
 +    "manifestVersion": 2,
 +    "id": base.get("id"),
-+    "createdBy": "vEGPU GitHub Actions guest-tools merge workflow",
++    "createdBy": "PEGPU GitHub Actions guest-tools merge workflow",
 +    "debian": base.get("debian", {}),
 +    "driver": driver,
 +    "nvidia": base.get("nvidia", {}),
@@ -415,19 +415,19 @@ index 0000000000000000000000000000000000000000..95b41f24a427b88b247cb45beb9cfefb
 +PY
 +
 +cat >"$OUT_DIR/README.txt" <<'EOF'
-+vEGPU guest tools
++PEGPU guest tools
 +
 +This directory contains the guest-side apple_dma DKMS source package and the
 +guest-driver source archive.
 +EOF
 +
-+tar -C "$OUT_DIR" -czf "$OUT_DIR/vegpu-guest-driver-bundle.tar.gz" \
++tar -C "$OUT_DIR" -czf "$OUT_DIR/pegpu-guest-driver-bundle.tar.gz" \
 +  README.txt manifest.json packages source
 +
 +(
 +  cd "$OUT_DIR"
 +  find packages source -type f -print | sort > .sha-files
-+  printf '%s\n' vegpu-guest-driver-bundle.tar.gz manifest.json >> .sha-files
++  printf '%s\n' pegpu-guest-driver-bundle.tar.gz manifest.json >> .sha-files
 +  shasum -a 512 $(cat .sha-files) > SHA512SUMS
 +  rm -f .sha-files
 +  shasum -a 512 -c SHA512SUMS
@@ -452,7 +452,7 @@ index 18b84c52d709fef426a9dde332aacd9dbbf88dde..bc41ed10ba2637563882da45ad20c2a4
  		4141A0012F70D00100C53A34 /* Hypervisor.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4141A0002F70D00100C53A34 /* Hypervisor.framework */; };
  		416AB0092F6BD5FB00C53A34 /* DriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 416AB0082F6BD5FB00C53A34 /* DriverKit.framework */; };
 -		416AB0122F6BD5FB00C53A34 /* scottjg.VFIOUserHostApp.VFIOUserPCIDriver.dext in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 416AB0062F6BD5FB00C53A34 /* scottjg.VFIOUserHostApp.VFIOUserPCIDriver.dext */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-+		416AB0122F6BD5FB00C53A34 /* com.vegpu.machine.VFIOUserPCIDriver.dext in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 416AB0062F6BD5FB00C53A34 /* com.vegpu.machine.VFIOUserPCIDriver.dext */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
++		416AB0122F6BD5FB00C53A34 /* com.pegpu.machine.VFIOUserPCIDriver.dext in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 416AB0062F6BD5FB00C53A34 /* com.pegpu.machine.VFIOUserPCIDriver.dext */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
  		416AB0182F6C0D0A00C53A34 /* PCIDriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 416AB0192F6C0D0A00C53A34 /* PCIDriverKit.framework */; };
  		41DD200A2F71D00100C53A34 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 41CC10092F71D00100C53A34 /* IOKit.framework */; };
  		41DD20102F71D00100C53A34 /* qemu-vfio-apple in Embed CLI Tools */ = {isa = PBXBuildFile; fileRef = 41DD20032F71D00100C53A34 /* qemu-vfio-apple */; };
@@ -461,7 +461,7 @@ index 18b84c52d709fef426a9dde332aacd9dbbf88dde..bc41ed10ba2637563882da45ad20c2a4
  			dstSubfolderSpec = 16;
  			files = (
 -				416AB0122F6BD5FB00C53A34 /* scottjg.VFIOUserHostApp.VFIOUserPCIDriver.dext in Embed System Extensions */,
-+				416AB0122F6BD5FB00C53A34 /* com.vegpu.machine.VFIOUserPCIDriver.dext in Embed System Extensions */,
++				416AB0122F6BD5FB00C53A34 /* com.pegpu.machine.VFIOUserPCIDriver.dext in Embed System Extensions */,
  			);
  			name = "Embed System Extensions";
  			runOnlyForDeploymentPostprocessing = 0;
@@ -471,8 +471,8 @@ index 18b84c52d709fef426a9dde332aacd9dbbf88dde..bc41ed10ba2637563882da45ad20c2a4
  		4141A0002F70D00100C53A34 /* Hypervisor.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Hypervisor.framework; path = System/Library/Frameworks/Hypervisor.framework; sourceTree = SDKROOT; };
 -		416AAFF32F6BD59100C53A34 /* VFIOUserHostApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VFIOUserHostApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 -		416AB0062F6BD5FB00C53A34 /* scottjg.VFIOUserHostApp.VFIOUserPCIDriver.dext */ = {isa = PBXFileReference; explicitFileType = "wrapper.driver-extension"; includeInIndex = 0; path = scottjg.VFIOUserHostApp.VFIOUserPCIDriver.dext; sourceTree = BUILT_PRODUCTS_DIR; };
-+		416AAFF32F6BD59100C53A34 /* vEGPU Machine.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "vEGPU Machine.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-+		416AB0062F6BD5FB00C53A34 /* com.vegpu.machine.VFIOUserPCIDriver.dext */ = {isa = PBXFileReference; explicitFileType = "wrapper.driver-extension"; includeInIndex = 0; path = com.vegpu.machine.VFIOUserPCIDriver.dext; sourceTree = BUILT_PRODUCTS_DIR; };
++		416AAFF32F6BD59100C53A34 /* PEGPU Machine.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "PEGPU Machine.app"; sourceTree = BUILT_PRODUCTS_DIR; };
++		416AB0062F6BD5FB00C53A34 /* com.pegpu.machine.VFIOUserPCIDriver.dext */ = {isa = PBXFileReference; explicitFileType = "wrapper.driver-extension"; includeInIndex = 0; path = com.pegpu.machine.VFIOUserPCIDriver.dext; sourceTree = BUILT_PRODUCTS_DIR; };
  		416AB0082F6BD5FB00C53A34 /* DriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DriverKit.framework; path = System/Library/Frameworks/DriverKit.framework; sourceTree = SDKROOT; };
  		416AB0192F6C0D0A00C53A34 /* PCIDriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = PCIDriverKit.framework; path = System/Library/Frameworks/PCIDriverKit.framework; sourceTree = SDKROOT; };
  		41CC10092F71D00100C53A34 /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = System/Library/Frameworks/IOKit.framework; sourceTree = SDKROOT; };
@@ -482,8 +482,8 @@ index 18b84c52d709fef426a9dde332aacd9dbbf88dde..bc41ed10ba2637563882da45ad20c2a4
  			children = (
 -				416AAFF32F6BD59100C53A34 /* VFIOUserHostApp.app */,
 -				416AB0062F6BD5FB00C53A34 /* scottjg.VFIOUserHostApp.VFIOUserPCIDriver.dext */,
-+				416AAFF32F6BD59100C53A34 /* vEGPU Machine.app */,
-+				416AB0062F6BD5FB00C53A34 /* com.vegpu.machine.VFIOUserPCIDriver.dext */,
++				416AAFF32F6BD59100C53A34 /* PEGPU Machine.app */,
++				416AB0062F6BD5FB00C53A34 /* com.pegpu.machine.VFIOUserPCIDriver.dext */,
  				41DD20032F71D00100C53A34 /* qemu-vfio-apple */,
  			);
  			name = Products;
@@ -492,7 +492,7 @@ index 18b84c52d709fef426a9dde332aacd9dbbf88dde..bc41ed10ba2637563882da45ad20c2a4
  			);
  			productName = VFIOUserHostApp;
 -			productReference = 416AAFF32F6BD59100C53A34 /* VFIOUserHostApp.app */;
-+			productReference = 416AAFF32F6BD59100C53A34 /* vEGPU Machine.app */;
++			productReference = 416AAFF32F6BD59100C53A34 /* PEGPU Machine.app */;
  			productType = "com.apple.product-type.application";
  		};
  		416AB0052F6BD5FB00C53A34 /* VFIOUserPCIDriver */ = {
@@ -501,7 +501,7 @@ index 18b84c52d709fef426a9dde332aacd9dbbf88dde..bc41ed10ba2637563882da45ad20c2a4
  			);
  			productName = VFIOUserPCIDriver;
 -			productReference = 416AB0062F6BD5FB00C53A34 /* scottjg.VFIOUserHostApp.VFIOUserPCIDriver.dext */;
-+			productReference = 416AB0062F6BD5FB00C53A34 /* com.vegpu.machine.VFIOUserPCIDriver.dext */;
++			productReference = 416AB0062F6BD5FB00C53A34 /* com.pegpu.machine.VFIOUserPCIDriver.dext */;
  			productType = "com.apple.product-type.driver-extension";
  		};
  		41DD20012F71D00100C53A34 /* qemu-vfio-apple */ = {
@@ -509,8 +509,8 @@ index 18b84c52d709fef426a9dde332aacd9dbbf88dde..bc41ed10ba2637563882da45ad20c2a4
  				ENABLE_HARDENED_RUNTIME = YES;
  				ENABLE_PREVIEWS = YES;
  				GENERATE_INFOPLIST_FILE = YES;
-+				INFOPLIST_KEY_CFBundleDisplayName = "vEGPU Machine";
-+				INFOPLIST_KEY_CFBundleName = "vEGPU Machine";
++				INFOPLIST_KEY_CFBundleDisplayName = "PEGPU Machine";
++				INFOPLIST_KEY_CFBundleName = "PEGPU Machine";
  				INFOPLIST_KEY_NSHumanReadableCopyright = "";
  				INFOPLIST_KEY_NSSystemExtensionUsageDescription = "for claiming pci devices on your system to pass through to virtual machines";
  				LD_RUNPATH_SEARCH_PATHS = (
@@ -520,8 +520,8 @@ index 18b84c52d709fef426a9dde332aacd9dbbf88dde..bc41ed10ba2637563882da45ad20c2a4
  				MARKETING_VERSION = 1.0;
 -				PRODUCT_BUNDLE_IDENTIFIER = scottjg.VFIOUserHostApp;
 -				PRODUCT_NAME = "$(TARGET_NAME)";
-+				PRODUCT_BUNDLE_IDENTIFIER = com.vegpu.machine;
-+				PRODUCT_NAME = "vEGPU Machine";
++				PRODUCT_BUNDLE_IDENTIFIER = com.pegpu.machine;
++				PRODUCT_NAME = "PEGPU Machine";
  				STRING_CATALOG_GENERATE_SYMBOLS = YES;
  				SWIFT_APPROACHABLE_CONCURRENCY = YES;
  				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -529,8 +529,8 @@ index 18b84c52d709fef426a9dde332aacd9dbbf88dde..bc41ed10ba2637563882da45ad20c2a4
  				ENABLE_HARDENED_RUNTIME = YES;
  				ENABLE_PREVIEWS = YES;
  				GENERATE_INFOPLIST_FILE = YES;
-+				INFOPLIST_KEY_CFBundleDisplayName = "vEGPU Machine";
-+				INFOPLIST_KEY_CFBundleName = "vEGPU Machine";
++				INFOPLIST_KEY_CFBundleDisplayName = "PEGPU Machine";
++				INFOPLIST_KEY_CFBundleName = "PEGPU Machine";
  				INFOPLIST_KEY_NSHumanReadableCopyright = "";
  				INFOPLIST_KEY_NSSystemExtensionUsageDescription = "for claiming pci devices on your system to pass through to virtual machines";
  				LD_RUNPATH_SEARCH_PATHS = (
@@ -540,8 +540,8 @@ index 18b84c52d709fef426a9dde332aacd9dbbf88dde..bc41ed10ba2637563882da45ad20c2a4
  				MARKETING_VERSION = 1.0;
 -				PRODUCT_BUNDLE_IDENTIFIER = scottjg.VFIOUserHostApp;
 -				PRODUCT_NAME = "$(TARGET_NAME)";
-+				PRODUCT_BUNDLE_IDENTIFIER = com.vegpu.machine;
-+				PRODUCT_NAME = "vEGPU Machine";
++				PRODUCT_BUNDLE_IDENTIFIER = com.pegpu.machine;
++				PRODUCT_NAME = "PEGPU Machine";
  				STRING_CATALOG_GENERATE_SYMBOLS = YES;
  				SWIFT_APPROACHABLE_CONCURRENCY = YES;
  				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -550,7 +550,7 @@ index 18b84c52d709fef426a9dde332aacd9dbbf88dde..bc41ed10ba2637563882da45ad20c2a4
  				INFOPLIST_KEY_OSBundleUsageDescription = "VFIO User PCI Driver";
  				MARKETING_VERSION = 1.0;
 -				PRODUCT_BUNDLE_IDENTIFIER = scottjg.VFIOUserHostApp.VFIOUserPCIDriver;
-+				PRODUCT_BUNDLE_IDENTIFIER = com.vegpu.machine.VFIOUserPCIDriver;
++				PRODUCT_BUNDLE_IDENTIFIER = com.pegpu.machine.VFIOUserPCIDriver;
  				PRODUCT_NAME = "$(inherited)";
  				PROVISIONING_PROFILE_SPECIFIER = "";
  				RUN_CLANG_STATIC_ANALYZER = YES;
@@ -559,7 +559,7 @@ index 18b84c52d709fef426a9dde332aacd9dbbf88dde..bc41ed10ba2637563882da45ad20c2a4
  				INFOPLIST_KEY_OSBundleUsageDescription = "VFIO User PCI Driver";
  				MARKETING_VERSION = 1.0;
 -				PRODUCT_BUNDLE_IDENTIFIER = scottjg.VFIOUserHostApp.VFIOUserPCIDriver;
-+				PRODUCT_BUNDLE_IDENTIFIER = com.vegpu.machine.VFIOUserPCIDriver;
++				PRODUCT_BUNDLE_IDENTIFIER = com.pegpu.machine.VFIOUserPCIDriver;
  				PRODUCT_NAME = "$(inherited)";
  				PROVISIONING_PROFILE_SPECIFIER = "";
  				RUN_CLANG_STATIC_ANALYZER = YES;
@@ -568,7 +568,7 @@ index 18b84c52d709fef426a9dde332aacd9dbbf88dde..bc41ed10ba2637563882da45ad20c2a4
  				MACOSX_DEPLOYMENT_TARGET = 26.2;
  				MARKETING_VERSION = 1.0;
 -				PRODUCT_BUNDLE_IDENTIFIER = "scottjg.VFIOUserHostApp.qemu-vfio-apple";
-+				PRODUCT_BUNDLE_IDENTIFIER = "com.vegpu.machine.qemu-vfio-apple";
++				PRODUCT_BUNDLE_IDENTIFIER = "com.pegpu.machine.qemu-vfio-apple";
  				PRODUCT_NAME = "$(TARGET_NAME)";
  				SDKROOT = macosx;
  				SKIP_INSTALL = YES;
@@ -577,7 +577,7 @@ index 18b84c52d709fef426a9dde332aacd9dbbf88dde..bc41ed10ba2637563882da45ad20c2a4
  				MACOSX_DEPLOYMENT_TARGET = 26.2;
  				MARKETING_VERSION = 1.0;
 -				PRODUCT_BUNDLE_IDENTIFIER = "scottjg.VFIOUserHostApp.qemu-vfio-apple";
-+				PRODUCT_BUNDLE_IDENTIFIER = "com.vegpu.machine.qemu-vfio-apple";
++				PRODUCT_BUNDLE_IDENTIFIER = "com.pegpu.machine.qemu-vfio-apple";
  				PRODUCT_NAME = "$(TARGET_NAME)";
  				SDKROOT = macosx;
  				SKIP_INSTALL = YES;
@@ -601,7 +601,7 @@ index 0000000000000000000000000000000000000000..0c49c88f54c8862a7558f6fa6b54cc96
 +    private init() {
 +        let hosting = NSHostingController(rootView: AboutView())
 +        let window = NSWindow(contentViewController: hosting)
-+        window.title = "About vEGPU Machine"
++        window.title = "About PEGPU Machine"
 +        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
 +        window.setContentSize(NSSize(width: 720, height: 440))
 +        window.minSize = NSSize(width: 620, height: 360)
@@ -628,7 +628,7 @@ index 0000000000000000000000000000000000000000..0c49c88f54c8862a7558f6fa6b54cc96
 +    private init(document: NoticeDocument) {
 +        let hosting = NSHostingController(rootView: NoticeDocumentView(document: document))
 +        let window = NSWindow(contentViewController: hosting)
-+        window.title = "\(document.title) - vEGPU Machine"
++        window.title = "\(document.title) - PEGPU Machine"
 +        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
 +        window.setContentSize(NSSize(width: 860, height: 640))
 +        window.minSize = NSSize(width: 680, height: 460)
@@ -658,7 +658,7 @@ index 0000000000000000000000000000000000000000..0c49c88f54c8862a7558f6fa6b54cc96
 +                    .cornerRadius(14)
 +
 +                VStack(alignment: .leading, spacing: 5) {
-+                    Text("vEGPU Machine")
++                    Text("PEGPU Machine")
 +                        .font(.system(size: 30, weight: .semibold))
 +                    Text(appVersionLine)
 +                        .font(.callout)
@@ -669,13 +669,13 @@ index 0000000000000000000000000000000000000000..0c49c88f54c8862a7558f6fa6b54cc96
 +            Divider()
 +
 +            VStack(alignment: .leading, spacing: 11) {
-+                Text("vEGPU Machine bundles the macOS DriverKit host, patched QEMU runtime, firmware, and guest tools for external GPU passthrough workflows.")
++                Text("PEGPU Machine bundles the macOS DriverKit host, patched QEMU runtime, firmware, and guest tools for external GPU passthrough workflows.")
 +
 +                Text("DriverKit, VFIO, and QEMU integration work in this distribution is based on Scott J. Goldman's scottjg/qemu-vfio-apple repository at https://github.com/scottjg/qemu-vfio-apple, including work from its wip branch. We are grateful for his work enabling eGPU use on macOS, and we encourage users to follow the original project for its upstream progress.")
 +
 +                Text("The QEMU-side macOS SPICE/virgl rendering runtime also adapts work from the utmapp/qemu QEMU fork at https://github.com/utmapp/qemu and the utmapp/virglrenderer fork at https://github.com/utmapp/virglrenderer.")
 +
-+                Text("vEGPU Machine is not endorsed by, sponsored by, or affiliated with Scott J. Goldman, scottjg/qemu-vfio-apple, utmapp/qemu, utmapp/virglrenderer, or their maintainers. QEMU-derived code is distributed under the GPL version 2 terms applicable to QEMU; bundled dependencies carry their own notices and license texts.")
++                Text("PEGPU Machine is not endorsed by, sponsored by, or affiliated with Scott J. Goldman, scottjg/qemu-vfio-apple, utmapp/qemu, utmapp/virglrenderer, or their maintainers. QEMU-derived code is distributed under the GPL version 2 terms applicable to QEMU; bundled dependencies carry their own notices and license texts.")
 +            }
 +            .font(.body)
 +            .foregroundStyle(.primary)
@@ -761,7 +761,7 @@ index 0000000000000000000000000000000000000000..0c49c88f54c8862a7558f6fa6b54cc96
 +            loadError = """
 +            \(document.rawValue) was not found in the app bundle.
 +
-+            Build or package vEGPU Machine with Contents/Resources/\(noticesResourceName)/ populated by contrib/apple-vfio/scripts/make-notice-bundle.sh.
++            Build or package PEGPU Machine with Contents/Resources/\(noticesResourceName)/ populated by contrib/apple-vfio/scripts/make-notice-bundle.sh.
 +            """
 +            return
 +        }
@@ -955,11 +955,11 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..56647c580cad9370bcb83617edfb625c
      private var header: some View {
          VStack(alignment: .leading, spacing: 6) {
 -            Text("QEMU VFIO Setup")
-+            Text("vEGPU Machine")
++            Text("PEGPU Machine")
                  .font(.title2)
                  .fontWeight(.semibold)
 -            Text("This app installs a DriverKit system extension that lets QEMU pass PCI devices through to virtual machines on Apple Silicon. macOS requires the installer to live inside an app bundle in /Applications.")
-+            Text("Manages the macOS driver and bundled QEMU runtime used by vEGPU virtual machines.")
++            Text("Manages the macOS driver and bundled QEMU runtime used by PEGPU virtual machines.")
                  .font(.callout)
                  .foregroundStyle(.secondary)
                  .fixedSize(horizontal: false, vertical: true)
@@ -1194,9 +1194,9 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..56647c580cad9370bcb83617edfb625c
 -                detail: activationManager.extensionIdentifier,
 +                title: "macOS driver ready",
 +                detail: """
-+                Ready for vEGPU virtual machines.
++                Ready for PEGPU virtual machines.
 +
-+                If this driver was installed by an older vEGPU Machine app that \
++                If this driver was installed by an older PEGPU Machine app that \
 +                was replaced, Force Uninstall runs `systemextensionsctl uninstall \
 +                - \(activationManager.extensionIdentifier)` to remove the leftover dext.
 +                """,
@@ -1246,7 +1246,7 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..56647c580cad9370bcb83617edfb625c
 -            This will deactivate \(activationManager.extensionIdentifier) and \
 -            remove it from /Library/SystemExtensions. macOS may require a \
 -            reboot to finish removing the driver.
-+            This removes the macOS driver used by vEGPU Machine. macOS may \
++            This removes the macOS driver used by PEGPU Machine. macOS may \
 +            require a reboot to finish removing it.
              """
          alert.alertStyle = .warning
@@ -1262,7 +1262,7 @@ index 05050453c24c896a32df02bf1dbd665e30b84b97..56647c580cad9370bcb83617edfb625c
 +        let alert = NSAlert()
 +        alert.messageText = "Force uninstall the macOS driver?"
 +        alert.informativeText = """
-+            Use this only if a driver from an older vEGPU Machine app remains \
++            Use this only if a driver from an older PEGPU Machine app remains \
 +            installed after replacing the app. This runs:
  
 -private struct CliRow: View {
@@ -1400,7 +1400,7 @@ index 8d4d1be5e1d72bfe7976ff49097470dcc6306ecf..965e3ce6c4ced62e484c769c17f5e02e
 -// inject `-L <bundled-firmware>` automatically; otherwise users would have to
 -// remember to pass it on every invocation.
 +// The checklist surfaces app-bundle state used by the DriverKit installer.
-+// vEGPU resolves QEMU and helper tools directly from its app bundle; this app
++// PEGPU resolves QEMU and helper tools directly from its app bundle; this app
 +// does not install ~/.local/bin wrappers.
  
  import AppKit
@@ -1425,7 +1425,7 @@ index 8d4d1be5e1d72bfe7976ff49097470dcc6306ecf..965e3ce6c4ced62e484c769c17f5e02e
      var qemuBinaryURL:  URL { macOSURL.appendingPathComponent("qemu-system-aarch64") }
 -    var cliBinaryURL:   URL { macOSURL.appendingPathComponent("qemu-vfio-apple") }
 -    var hostBinaryURL:  URL { Bundle.main.executableURL ?? macOSURL.appendingPathComponent("VFIOUserHostApp") }
-+    var hostBinaryURL:  URL { Bundle.main.executableURL ?? macOSURL.appendingPathComponent("vEGPU Machine") }
++    var hostBinaryURL:  URL { Bundle.main.executableURL ?? macOSURL.appendingPathComponent("PEGPU Machine") }
  
      static var current: BundleLayout {
          return BundleLayout(bundleURL: Bundle.main.bundleURL)
@@ -2094,7 +2094,7 @@ index a39c5f68952a04677d4837d2ec9fac6aac3253b5..63179c8298660573e439c3f33efc2843
 +
 +    func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
 +        finish(
-+            "vEGPU Machine submitted the macOS driver \(command.requestName) request. Approve it in System Settings > General > Login Items & Extensions > Driver Extensions.",
++            "PEGPU Machine submitted the macOS driver \(command.requestName) request. Approve it in System Settings > General > Login Items & Extensions > Driver Extensions.",
 +            code: 0
 +        )
 +    }
@@ -2112,11 +2112,11 @@ index a39c5f68952a04677d4837d2ec9fac6aac3253b5..63179c8298660573e439c3f33efc2843
 +        _ request: OSSystemExtensionRequest,
 +        didFinishWithResult result: OSSystemExtensionRequest.Result
 +    ) {
-+        finish("vEGPU Machine macOS driver \(command.requestName) request completed: \(String(describing: result)).", code: 0)
++        finish("PEGPU Machine macOS driver \(command.requestName) request completed: \(String(describing: result)).", code: 0)
 +    }
 +
 +    func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
-+        finish("vEGPU Machine macOS driver \(command.requestName) request failed: \(error.localizedDescription)", code: 1)
++        finish("PEGPU Machine macOS driver \(command.requestName) request failed: \(error.localizedDescription)", code: 1)
 +    }
 +
 +    private func printLine(_ message: String) {
@@ -2152,7 +2152,7 @@ index a39c5f68952a04677d4837d2ec9fac6aac3253b5..63179c8298660573e439c3f33efc2843
          .windowResizability(.contentSize)
 +        .commands {
 +            CommandGroup(replacing: .appInfo) {
-+                Button("About vEGPU Machine") {
++                Button("About PEGPU Machine") {
 +                    AboutWindowController.shared.show()
 +                }
 +            }
@@ -2581,7 +2581,7 @@ index db36566b5662d03f8122ac10df3ec3ae0e0da831..122ecfb26e7a9cb77af269ab7b7fef6a
 +        return 2
 +    }
 +    guard let appURL = resolveHostAppURL() else {
-+        warn("vEGPU Machine.app not found; install it in /Applications or run this CLI from inside the app bundle")
++        warn("PEGPU Machine.app not found; install it in /Applications or run this CLI from inside the app bundle")
 +        return 1
 +    }
 +
@@ -2609,7 +2609,7 @@ index db36566b5662d03f8122ac10df3ec3ae0e0da831..122ecfb26e7a9cb77af269ab7b7fef6a
 +    let candidates = [
 +        hostAppURLFromBundle(),
 +        hostAppURLFromExecutable(),
-+        URL(fileURLWithPath: "/Applications/vEGPU Machine.app")
++        URL(fileURLWithPath: "/Applications/PEGPU Machine.app")
 +    ]
 +    for candidate in candidates {
 +        guard let candidate else { continue }
@@ -2646,7 +2646,7 @@ index db36566b5662d03f8122ac10df3ec3ae0e0da831..122ecfb26e7a9cb77af269ab7b7fef6a
      for line in out.components(separatedBy: "\n") where line.contains(identifier) {
          // Lines look like:
 -        //   *   *   scottjg.VFIOUserHostApp.VFIOUserPCIDriver (1.0/1)  [activated enabled]
-+        //   *   *   com.vegpu.machine.VFIOUserPCIDriver (1.0/1)  [activated enabled]
++        //   *   *   com.pegpu.machine.VFIOUserPCIDriver (1.0/1)  [activated enabled]
          //               ↑                                                  ↑ status in brackets
          if let lo = line.range(of: "[", options: .backwards),
             let hi = line.range(of: "]", options: .backwards),
@@ -2670,7 +2670,7 @@ index 2aa9cbe8c4f1868cd316b26d0d560ff67637873e..47a25673c5d894d2d46c829991e1ea12
 -//      VFIOUserHostApp.app. When running out-of-bundle (dev / swift run)
 -//      we fall back to PATH, which mostly exists for testing.
 +//   1. Find the bundled patched qemu binaries and firmware inside
-+//      vEGPU Machine.app.
++//      PEGPU Machine.app.
  //
 -//   2. Lazily create a qcow2 overlay backed by the cached base image so
 -//      boots are non-destructive. `reset` subcommand deletes the overlay
@@ -2708,7 +2708,7 @@ index 2aa9cbe8c4f1868cd316b26d0d560ff67637873e..47a25673c5d894d2d46c829991e1ea12
          case .bundleMissing(let path):
              return """
 -            missing required file(s) in the app bundle; reinstall VFIOUserHostApp.app:
-+            missing required file(s) in the app bundle; reinstall vEGPU Machine.app:
++            missing required file(s) in the app bundle; reinstall PEGPU Machine.app:
                \(path)
              """
          case .qemuImgFailed(let c, let s): return "qemu-img exited \(c): \(s)"
@@ -2741,8 +2741,8 @@ index 2aa9cbe8c4f1868cd316b26d0d560ff67637873e..47a25673c5d894d2d46c829991e1ea12
 -///
 -/// When run from a development build (e.g. swift build in a plain
 -/// directory), we fall back to `PATH` so manual testing still works.
-+/// `vEGPU Machine.app/Contents/MacOS/`. The launcher deliberately does not
-+/// search PATH: vEGPU must use the patched QEMU bundled with vEGPU Machine.
++/// `PEGPU Machine.app/Contents/MacOS/`. The launcher deliberately does not
++/// search PATH: PEGPU must use the patched QEMU bundled with PEGPU Machine.
  func discoverLauncherBundle() throws -> LauncherBundle {
      let exe = executableURL()
      let macosDir = exe.deletingLastPathComponent()
@@ -3118,7 +3118,7 @@ index 2aa9cbe8c4f1868cd316b26d0d560ff67637873e..47a25673c5d894d2d46c829991e1ea12
 -    // needed. vmnet-shared can be added later via a flag.
 -    a += ["-netdev", "user,id=net0,hostfwd=tcp::\(opts.sshPort)-:22"]
 -    a += ["-device", "virtio-net-pci,netdev=net0"]
-+    // Network. vEGPU has one supported data path: QEMU's native
++    // Network. PEGPU has one supported data path: QEMU's native
 +    // vmnet.framework shared backend.
 +    let netdev = "vmnet-shared,id=net0,start-address=\(opts.vmnetStartAddress),end-address=\(opts.vmnetEndAddress),subnet-mask=\(opts.vmnetSubnetMask)"
 +    a += ["-netdev", netdev]
@@ -3130,7 +3130,7 @@ index 2aa9cbe8c4f1868cd316b26d0d560ff67637873e..47a25673c5d894d2d46c829991e1ea12
      a += ["-device", "qemu-xhci,id=xhci"]
      a += ["-device", "usb-kbd,bus=xhci.0"]
      a += ["-device", "usb-tablet,bus=xhci.0"]
-+    a += ["-device", "usb-mouse,id=vegpu-relative-mouse,bus=xhci.0"]
++    a += ["-device", "usb-mouse,id=pegpu-relative-mouse,bus=xhci.0"]
      if opts.headless {
 -        a += ["-display", "none", "-nographic", "-serial", "mon:stdio"]
 +        a += ["-display", "none", "-nographic"]
@@ -3255,7 +3255,7 @@ index d65b071f7f584eb2b58b3c89f6c8f7311dcc21d5..a8098274af20f7a9a45ee2164d0a5a33
  //
 -// Lives next to qemu-system-aarch64 inside VFIOUserHostApp.app and is
 -// surfaced to the user via a wrapper at ~/.local/bin/qemu-vfio-apple.
-+// Lives next to qemu-system-aarch64 inside vEGPU Machine.app.
++// Lives next to qemu-system-aarch64 inside PEGPU Machine.app.
  //
 -// For the VM side: pulls a prebaked qcow2 image from a GHCR OCI artifact
 -// (resumable, sha256-verified, content-addressed on disk) and boots a
@@ -3276,7 +3276,7 @@ index d65b071f7f584eb2b58b3c89f6c8f7311dcc21d5..a8098274af20f7a9a45ee2164d0a5a33
 -// bundles do), so install/uninstall is driven from VFIOUserHostApp's
 -// setup checklist and this CLI only reports status.
 +// Mac command-line tool targets in Xcode don't get such a profile (only `.app`
-+// bundles do), so install/uninstall is driven from vEGPU Machine's
++// bundles do), so install/uninstall is driven from PEGPU Machine's
 +// setup checklist and this launcher only reports status.
  //
  // Commands:
@@ -3288,9 +3288,9 @@ index d65b071f7f584eb2b58b3c89f6c8f7311dcc21d5..a8098274af20f7a9a45ee2164d0a5a33
 -//   images          list cached images and overlays
 +//   run/start       boot a local guest disk passed with --disk
 +//   kill-all        terminate active qemu-system-aarch64 runtimes launched
-+//                   through this vEGPU Machine bundle
++//                   through this PEGPU Machine bundle
  //   driver-status   report DriverKit extension state
-+//   driver-setup    open the vEGPU Machine setup UI
++//   driver-setup    open the PEGPU Machine setup UI
  //   list-devices    list PCI endpoints with current driver bindings
  //   help            show usage
  //   version         print version
@@ -3441,7 +3441,7 @@ index d65b071f7f584eb2b58b3c89f6c8f7311dcc21d5..a8098274af20f7a9a45ee2164d0a5a33
 +        case "--vmnet-end-address": opts.vmnetEndAddress = value(for: key)
 +        case "--vmnet-subnet-mask": opts.vmnetSubnetMask = value(for: key)
 +        case "--sudo", "--root":
-+            die("\(key) is not supported; vEGPU networking is handled by QEMU vmnet-shared")
++            die("\(key) is not supported; PEGPU networking is handled by QEMU vmnet-shared")
          case "--dry-run":        opts.dryRun = true
          default:
              die("unknown flag: \(arg) (try `qemu-vfio-apple help`)")
@@ -3541,10 +3541,10 @@ index d65b071f7f584eb2b58b3c89f6c8f7311dcc21d5..a8098274af20f7a9a45ee2164d0a5a33
 -          driver-status   report DriverKit extension state (is the VFIO
 +          run/start       (default) boot a local guest disk passed with --disk
 +          kill-all        terminate active qemu-system-aarch64 runtimes launched
-+                          through this vEGPU Machine bundle
++                          through this PEGPU Machine bundle
 +          driver-status   report DriverKit extension state (is the PCIe
                            driver activated, waiting for user approval, …?)
-+          driver-setup    open vEGPU Machine so the user can activate the
++          driver-setup    open PEGPU Machine so the user can activate the
 +                          DriverKit extension through the app UI
            list-devices    list host PCI endpoints with their current driver
 -                          bindings, marking those bound to the VFIO driver
@@ -3636,7 +3636,7 @@ index d65b071f7f584eb2b58b3c89f6c8f7311dcc21d5..a8098274af20f7a9a45ee2164d0a5a33
 +          --json                  print kill summary as JSON
 +
 +        flags (driver-setup):
-+          --gui                   open the vEGPU Machine setup UI
++          --gui                   open the PEGPU Machine setup UI
  
          examples:
 -          qemu-vfio-apple
@@ -3807,7 +3807,7 @@ index d65b071f7f584eb2b58b3c89f6c8f7311dcc21d5..a8098274af20f7a9a45ee2164d0a5a33
 +        if json {
 +            printJSON(summary)
 +        } else {
-+            log("no vEGPU Machine QEMU runtimes are running")
++            log("no PEGPU Machine QEMU runtimes are running")
 +        }
          return 0
      }
@@ -3827,7 +3827,7 @@ index d65b071f7f584eb2b58b3c89f6c8f7311dcc21d5..a8098274af20f7a9a45ee2164d0a5a33
 -        keepNames.insert(name)
 -        keepReasons[name, default: []].append(reason)
 +    if !json {
-+        log("terminating vEGPU Machine QEMU runtimes: \(matched.map(String.init).joined(separator: ", "))")
++        log("terminating PEGPU Machine QEMU runtimes: \(matched.map(String.init).joined(separator: ", "))")
      }
  
 -    if opts.basePath != nil {
@@ -3879,7 +3879,7 @@ index d65b071f7f584eb2b58b3c89f6c8f7311dcc21d5..a8098274af20f7a9a45ee2164d0a5a33
 +    if json {
 +        printJSON(summary)
 +    } else if stillRunning.isEmpty {
-+        log("all vEGPU Machine QEMU runtimes stopped")
++        log("all PEGPU Machine QEMU runtimes stopped")
 +    } else {
 +        warn("QEMU runtimes still running after kill switch: \(stillRunning.map(String.init).joined(separator: ", "))")
      }
@@ -3922,7 +3922,7 @@ index d65b071f7f584eb2b58b3c89f6c8f7311dcc21d5..a8098274af20f7a9a45ee2164d0a5a33
 +    let sibling = current.deletingLastPathComponent().appendingPathComponent("qemu-system-aarch64").standardizedFileURL.path
 +    return Array(Set([
 +        sibling,
-+        "/Applications/vEGPU Machine.app/Contents/MacOS/qemu-system-aarch64"
++        "/Applications/PEGPU Machine.app/Contents/MacOS/qemu-system-aarch64"
 +    ]))
 +}
 +
@@ -4110,7 +4110,7 @@ index 0000000000000000000000000000000000000000..eb420547adb7cb5374db6ebfcd1ba1e8
 +# This file contains OpenResearchTools modifications for the macOS SPICE/virgl display runtime.
 +#
 +# Build macOS display dependencies that Homebrew does not provide in the
-+# shape QEMU needs for vEGPU's SPICE/virgl display runtime.
++# shape QEMU needs for PEGPU's SPICE/virgl display runtime.
 +#
 +# UTM QEMU uses a UTM-maintained virglrenderer fork for macOS native scanout.
 +# Keep this script in the GPL QEMU tree because the resulting dependency feeds
@@ -4185,8 +4185,8 @@ index 0000000000000000000000000000000000000000..eb420547adb7cb5374db6ebfcd1ba1e8
 +write_minimal_egl_platform_headers() {
 +    mkdir -p "$PREFIX/include/EGL" "$PREFIX/include/KHR"
 +    cat > "$PREFIX/include/KHR/khrplatform.h" <<'EOF'
-+#ifndef VEGPU_MINIMAL_KHRPLATFORM_H
-+#define VEGPU_MINIMAL_KHRPLATFORM_H
++#ifndef PEGPU_MINIMAL_KHRPLATFORM_H
++#define PEGPU_MINIMAL_KHRPLATFORM_H
 +/*
 + * Modified by OpenResearchTools, 2026-05-29.
 + * SPDX-License-Identifier: GPL-2.0-or-later
@@ -4209,8 +4209,8 @@ index 0000000000000000000000000000000000000000..eb420547adb7cb5374db6ebfcd1ba1e8
 +#endif
 +EOF
 +    cat > "$PREFIX/include/EGL/eglplatform.h" <<'EOF'
-+#ifndef VEGPU_MINIMAL_EGLPLATFORM_H
-+#define VEGPU_MINIMAL_EGLPLATFORM_H
++#ifndef PEGPU_MINIMAL_EGLPLATFORM_H
++#define PEGPU_MINIMAL_EGLPLATFORM_H
 +/*
 + * Modified by OpenResearchTools, 2026-05-29.
 + * SPDX-License-Identifier: GPL-2.0-or-later
@@ -4430,9 +4430,9 @@ index 0000000000000000000000000000000000000000..82dee84407513099de67b96decfb947b
 +HERE="$(cd "$(dirname "$0")" && pwd)"
 +REPO_ROOT="$(cd "$HERE/../../.." && pwd)"
 +
-+APP="${1:-${APP_PATH:-$REPO_ROOT/build/xcode-nosip/Build/Products/Debug/vEGPU Machine.app}}"
-+OUT="${2:-${PKG_OUT:-$REPO_ROOT/artifacts/vEGPU-Machine.pkg}}"
-+IDENTIFIER="${PKG_IDENTIFIER:-com.openresearchtools.vEGPUMachine.pkg}"
++APP="${1:-${APP_PATH:-$REPO_ROOT/build/xcode-nosip/Build/Products/Debug/PEGPU Machine.app}}"
++OUT="${2:-${PKG_OUT:-$REPO_ROOT/artifacts/PEGPU-Machine.pkg}}"
++IDENTIFIER="${PKG_IDENTIFIER:-com.pegpu.machine.pkg}"
 +VERSION="${PKG_VERSION:-0.1.1}"
 +
 +if [[ ! -d "$APP" ]]; then
@@ -4441,26 +4441,26 @@ index 0000000000000000000000000000000000000000..82dee84407513099de67b96decfb947b
 +  exit 1
 +fi
 +
-+if [[ ! -x "$APP/Contents/MacOS/vEGPU Machine" && ! -x "$APP/Contents/MacOS/VFIOUserHostApp" ]]; then
++if [[ ! -x "$APP/Contents/MacOS/PEGPU Machine" && ! -x "$APP/Contents/MacOS/VFIOUserHostApp" ]]; then
 +  echo "error: malformed app bundle, missing host executable: $APP" >&2
 +  exit 1
 +fi
 +
 +if [[ ! -x "$APP/Contents/MacOS/qemu-system-aarch64" ]]; then
 +  echo "error: app bundle does not contain qemu-system-aarch64: $APP" >&2
-+  echo "Build with QEMU_DIST_DIR or an in-tree dist/ so vEGPU Machine.app contains QEMU." >&2
++  echo "Build with QEMU_DIST_DIR or an in-tree dist/ so PEGPU Machine.app contains QEMU." >&2
 +  exit 1
 +fi
 +
 +mkdir -p "$(dirname "$OUT")"
 +rm -f "$OUT"
 +
-+STAGE="$(mktemp -d "${TMPDIR:-/tmp}/vEGPU-Machine-pkg.XXXXXX")"
-+COMPONENTS="$(mktemp "${TMPDIR:-/tmp}/vEGPU-Machine-components.XXXXXX")"
++STAGE="$(mktemp -d "${TMPDIR:-/tmp}/PEGPU-Machine-pkg.XXXXXX")"
++COMPONENTS="$(mktemp "${TMPDIR:-/tmp}/PEGPU-Machine-components.XXXXXX")"
 +trap 'rm -rf "$STAGE" "$COMPONENTS"' EXIT
 +
 +mkdir -p "$STAGE/Applications"
-+ditto "$APP" "$STAGE/Applications/vEGPU Machine.app"
++ditto "$APP" "$STAGE/Applications/PEGPU Machine.app"
 +
 +pkgbuild --analyze --root "$STAGE" "$COMPONENTS" >/dev/null
 +/usr/libexec/PlistBuddy -c 'Set :0:BundleIsRelocatable false' "$COMPONENTS"
@@ -4505,8 +4505,8 @@ index 0000000000000000000000000000000000000000..05027268863a436e823486074af26cf9
 +SCHEME="${SCHEME:-VFIOUserHostApp}"
 +ARCHS="${ARCHS:-arm64}"
 +ONLY_ACTIVE_ARCH="${ONLY_ACTIVE_ARCH:-NO}"
-+APP="$DERIVED_DATA/Build/Products/$CONFIGURATION/vEGPU Machine.app"
-+DEXT="$APP/Contents/Library/SystemExtensions/com.vegpu.machine.VFIOUserPCIDriver.dext"
++APP="$DERIVED_DATA/Build/Products/$CONFIGURATION/PEGPU Machine.app"
++DEXT="$APP/Contents/Library/SystemExtensions/com.pegpu.machine.VFIOUserPCIDriver.dext"
 +GENERATED_NOTICES="${THIRD_PARTY_NOTICES_DIR:-$DERIVED_DATA/generated-third-party-notices}"
 +NOTICE_DIST_DIR="${QEMU_DIST_DIR:-$REPO_ROOT/dist}"
 +
@@ -4541,7 +4541,7 @@ index 0000000000000000000000000000000000000000..05027268863a436e823486074af26cf9
 +  XCODE_VERSION_ARGS+=("CURRENT_PROJECT_VERSION=$CURRENT_PROJECT_VERSION")
 +fi
 +
-+echo "Building vEGPU Machine without Xcode-managed signing..."
++echo "Building PEGPU Machine without Xcode-managed signing..."
 +DEVELOPER_DIR="$DEVELOPER_DIR" THIRD_PARTY_NOTICES_DIR="$GENERATED_NOTICES" xcodebuild clean build \
 +  -project "$PROJECT" \
 +  -scheme "$SCHEME" \
@@ -4605,8 +4605,8 @@ index 0000000000000000000000000000000000000000..05027268863a436e823486074af26cf9
 +
 +source_revision = os.environ.get("GITHUB_SHA") or git_value("rev-parse", "HEAD")
 +source_ref = os.environ.get("GITHUB_REF") or git_value("rev-parse", "--abbrev-ref", "HEAD")
-+explicit_release_tag = os.environ.get("VGPU_RELEASE_TAG", "")
-+if os.environ.get("VGPU_PUBLISH_RELEASE") == "true" and explicit_release_tag:
++explicit_release_tag = os.environ.get("PEGPU_RELEASE_TAG", "")
++if os.environ.get("PEGPU_PUBLISH_RELEASE") == "true" and explicit_release_tag:
 +    release_tag = explicit_release_tag
 +else:
 +    release_tag = os.environ.get("GITHUB_REF_NAME", "")
@@ -4617,9 +4617,9 @@ index 0000000000000000000000000000000000000000..05027268863a436e823486074af26cf9
 +
 +manifest = {
 +    "manifestVersion": 1,
-+    "product": "vEGPU Machine",
++    "product": "PEGPU Machine",
 +    "bundleIdentifier": info.get("CFBundleIdentifier", ""),
-+    "bundleName": info.get("CFBundleName", "vEGPU Machine"),
++    "bundleName": info.get("CFBundleName", "PEGPU Machine"),
 +    "version": info.get("CFBundleShortVersionString", ""),
 +    "build": info.get("CFBundleVersion", ""),
 +    "sourceRevision": source_revision,
@@ -4627,7 +4627,7 @@ index 0000000000000000000000000000000000000000..05027268863a436e823486074af26cf9
 +    "releaseTag": release_tag,
 +    "distribution": {
 +        "format": "zip",
-+        "installPath": "/Applications/vEGPU Machine.app",
++        "installPath": "/Applications/PEGPU Machine.app",
 +        "signing": "ad-hoc",
 +        "hostPlatform": "macOS",
 +        "arch": os.environ.get("ARCHS", "arm64"),
@@ -4667,7 +4667,7 @@ index 0000000000000000000000000000000000000000..05027268863a436e823486074af26cf9
 +fi
 +
 +echo "Ad-hoc signing app helpers..."
-+sign_plain "$APP/Contents/MacOS/vEGPU Machine.debug.dylib"
++sign_plain "$APP/Contents/MacOS/PEGPU Machine.debug.dylib"
 +sign_plain "$APP/Contents/MacOS/VFIOUserHostApp.debug.dylib"
 +sign_plain "$APP/Contents/MacOS/__preview.dylib"
 +if [[ -f "$APP/Contents/MacOS/qemu-vfio-apple" ]]; then
@@ -4696,7 +4696,7 @@ index 0000000000000000000000000000000000000000..05027268863a436e823486074af26cf9
 +  exit 0
 +fi
 +
-+DEST="/Applications/vEGPU Machine.app"
++DEST="/Applications/PEGPU Machine.app"
 +echo "Installing to $DEST..."
 +rm -rf "$DEST"
 +ditto "$APP" "$DEST"
@@ -4718,7 +4718,7 @@ index 33c4738515e1d074e9701633c878e85513311d8e..03c814a7868e95cf57ccf602a330d3ec
  #                     is present it wins over the in-tree and fetched paths
  #   TARGET_BUILD_DIR  set by Xcode  (e.g. .../Build/Products/Debug)
 -#   WRAPPER_NAME      set by Xcode  (e.g. VFIOUserHostApp.app)
-+#   WRAPPER_NAME      set by Xcode  (e.g. vEGPU Machine.app)
++#   WRAPPER_NAME      set by Xcode  (e.g. PEGPU Machine.app)
  #   EXPANDED_CODE_SIGN_IDENTITY[_NAME]  set by Xcode (resolved cert)
  #   CONFIGURATION     set by Xcode  (Debug | Release)
  #
@@ -4760,7 +4760,7 @@ index 33c4738515e1d074e9701633c878e85513311d8e..03c814a7868e95cf57ccf602a330d3ec
 +    cat >&2 <<EOF
 +error: missing guest-tools artifact at $GUEST_TOOLS_SRC.
 +  Build or download VFIOUserHostApp/artifacts/guest-tools before packaging
-+  vEGPU Machine.app so the guest tools can be embedded in app resources.
++  PEGPU Machine.app so the guest tools can be embedded in app resources.
 +EOF
 +    exit 1
 +else
@@ -4837,7 +4837,7 @@ index 4cb4b1cb992893cd082f335fb2082218cee0eca7..275c809cbc9521a7e1c575a6a61183ee
  # apple-vfio contrib because the resulting layout (single dist/ tree with
  # @executable_path-rewritten dylibs in lib/) is shaped specifically for the
 -# VFIOUserHostApp .app bundle that embeds it.
-+# vEGPU Machine.app bundle that embeds it.
++# PEGPU Machine.app bundle that embeds it.
  #
  # Run from the qemu source root:
  #
@@ -4890,7 +4890,7 @@ index 4cb4b1cb992893cd082f335fb2082218cee0eca7..275c809cbc9521a7e1c575a6a61183ee
 +    exit 1
 +}
 +
-+# Package only firmware/data that the vEGPU Machine launch argv can request.
++# Package only firmware/data that the PEGPU Machine launch argv can request.
 +copy_required_firmware edk2-aarch64-code.fd
 +copy_required_firmware edk2-arm-vars.fd
 +copy_required_firmware efi-virtio.rom
@@ -4955,7 +4955,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +# SPDX-License-Identifier: GPL-2.0-or-later
  #
 -# Build a notice bundle to accompany binary distributions of VFIOUserHostApp
-+# Build a notice bundle to accompany binary distributions of vEGPU Machine
++# Build a notice bundle to accompany binary distributions of PEGPU Machine
  # when it embeds qemu-system-aarch64 and its third-party runtime dependencies.
  #
  # This generator creates a release-time notice bundle with:
@@ -5098,7 +5098,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +    fi
 +
 +    if [ ! -f "$GUEST_TOOLS_DIR/manifest.json" ] || \
-+       [ ! -f "$GUEST_TOOLS_DIR/vegpu-guest-driver-bundle.tar.gz" ] || \
++       [ ! -f "$GUEST_TOOLS_DIR/pegpu-guest-driver-bundle.tar.gz" ] || \
 +       [ ! -f "$GUEST_TOOLS_DIR/SHA512SUMS" ]; then
 +        printf 'error: guest tools payload is missing manifest, bundle, or checksums\n' >&2
 +        return 1
@@ -5128,13 +5128,13 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
  
 +cp "$REPO_ROOT/COPYING" "$LICENSE_DIR/machine-integration/GPL-2.0.txt"
 +cat > "$LICENSE_DIR/machine-integration/SOURCE_INFO.txt" <<'EOF'
-+Component: vEGPU Machine GPL-side host, launcher, and DriverKit integration
-+Runtime-Payloads: Contents/MacOS/vEGPU Machine; Contents/MacOS/qemu-vfio-apple; Contents/Library/SystemExtensions/com.vegpu.machine.VFIOUserPCIDriver.dext
++Component: PEGPU Machine GPL-side host, launcher, and DriverKit integration
++Runtime-Payloads: Contents/MacOS/PEGPU Machine; Contents/MacOS/qemu-vfio-apple; Contents/Library/SystemExtensions/com.pegpu.machine.VFIOUserPCIDriver.dext
 +Source-Type: QEMU-derived patch-stack sources
 +Source-Bundle-Paths: patch-stack/01-scottjg-qemu-vfio-apple-wip/0001-scottjg-qemu-vfio-apple-wip.patch; patch-stack/03-openresearchtools-vfiouserhostapp-core/0001-openresearchtools-vfiouserhostapp-core.patch
 +Source-Components: contrib/apple-vfio/VFIOUserHostApp; contrib/apple-vfio/qemu-vfio-apple; contrib/apple-vfio/VFIOUserPCIDriver
 +License-Metadata: GPL-2.0-or-later source-file notices in the QEMU-derived patch stack; QEMU as a whole remains GPL-2.0.
-+Notes: This block covers the GPL-side Machine host app integration, qemu-vfio-apple launcher, and DriverKit PCI user driver payloads installed inside vEGPU Machine.app. File-level SPDX identifiers and copyright notices in the reconstructed source tree remain authoritative.
++Notes: This block covers the GPL-side Machine host app integration, qemu-vfio-apple launcher, and DriverKit PCI user driver payloads installed inside PEGPU Machine.app. File-level SPDX identifiers and copyright notices in the reconstructed source tree remain authoritative.
 +EOF
 +
 +cp "$REPO_ROOT/COPYING" "$LICENSE_DIR/apple-dma/GPL-2.0.txt"
@@ -5288,7 +5288,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +        "license": "BSD-2-Clause-Patent; additional bundled firmware notices are listed in edk2-licenses.txt",
 +        "files": ["License.txt"],
 +        "recipe_note": (
-+            "vEGPU Machine packages the AArch64 edk2 pflash blobs used by "
++            "PEGPU Machine packages the AArch64 edk2 pflash blobs used by "
 +            "its QEMU launch path from pc-bios. The corresponding upstream "
 +            "edk2 source archive is saved here at the submodule commit "
 +            "recorded by the QEMU source tree."
@@ -5301,7 +5301,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +        "license": "GPL-2.0-only and UBDL notices as provided by iPXE",
 +        "files": ["COPYING", "COPYING.GPLv2", "COPYING.UBDL"],
 +        "recipe_note": (
-+            "vEGPU Machine packages pc-bios/efi-virtio.rom because QEMU's "
++            "PEGPU Machine packages pc-bios/efi-virtio.rom because QEMU's "
 +            "virtio-net-pci device class names that ROM by default. QEMU's "
 +            "source tree records the corresponding iPXE submodule revision."
 +        ),
@@ -5655,10 +5655,10 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +        for digest, relpath in sorted(source_archive_records, key=lambda item: str(item[1])):
 +            out.write(f"{digest}  {relpath.as_posix()}\n")
 +    with open(source_archive_root / "README", "w", encoding="utf-8") as out:
-+        out.write("vEGPU Machine Third-Party Source Archives\n")
++        out.write("PEGPU Machine Third-Party Source Archives\n")
 +        out.write("=======================================\n\n")
 +        out.write("This directory contains the upstream source archives and dependency recipe ")
-+        out.write("metadata fetched while generating the vEGPU Machine notice bundle. ")
++        out.write("metadata fetched while generating the PEGPU Machine notice bundle. ")
 +        out.write("Formula-backed dependencies include HOMEBREW_FORMULA.rb and ")
 +        out.write("HOMEBREW_FORMULA.json. Pinned dependencies include SOURCE_RECIPE.txt. ")
 +        out.write("The archive URLs, source roots, license metadata, and SHA256 values are ")
@@ -5732,7 +5732,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +    ("QEMU", "qemu", ["COPYING"]),
 +    ("edk2 firmware images", "edk2", ["edk2-licenses.txt", "License.txt"]),
 +    ("iPXE virtio option ROM", "ipxe", ["COPYING", "COPYING.GPLv2", "COPYING.UBDL"]),
-+    ("vEGPU Machine GPL-side host, qemu-vfio-apple, and DriverKit integration", "machine-integration", ["GPL-2.0.txt", "SOURCE_INFO.txt"]),
++    ("PEGPU Machine GPL-side host, qemu-vfio-apple, and DriverKit integration", "machine-integration", ["GPL-2.0.txt", "SOURCE_INFO.txt"]),
 +    ("apple-dma guest driver", "apple-dma", ["GPL-2.0.txt"]),
 +    ("pci.ids PCI ID database", "pci.ids", ["BSD-3-Clause.txt"]),
 +    ("QEMU subproject: Berkeley SoftFloat 3", "qemu-subprojects/berkeley-softfloat-3", ["COPYING.txt"]),
@@ -5773,13 +5773,13 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +]
 +
 +with output.open("w", encoding="utf-8") as out:
-+    out.write("vEGPU Machine Licenses\n")
++    out.write("PEGPU Machine Licenses\n")
 +    out.write("======================\n\n")
 +    out.write("Each package/dependency block below contains the package name, ")
 +    out.write("the source license file copied into this notice bundle, and the ")
 +    out.write("full license or notice text between BEGIN LICENSE and END LICENSE ")
 +    out.write("markers.\n\n")
-+    out.write("The source tree produced by applying the vEGPU Machine patch stack ")
++    out.write("The source tree produced by applying the PEGPU Machine patch stack ")
 +    out.write("to the recorded QEMU base is QEMU-derived. QEMU as a whole is ")
 +    out.write("released under the GNU General Public License, version 2. ")
 +    out.write("Individual files and bundled components may carry more specific ")
@@ -5810,16 +5810,16 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +
 +log "writing NOTICES"
 +cat > "$OUT_DIR/NOTICES" <<EOF
-+vEGPU Machine Notices
++PEGPU Machine Notices
 +=====================
 +
 +This notice covers source layers and third-party components bundled with
-+vEGPU Machine.
++PEGPU Machine.
 +
 +Acknowledgements and Independence
 +---------------------------------
 +
-+vEGPU Machine is not endorsed by, sponsored by, or affiliated with Scott J.
++PEGPU Machine is not endorsed by, sponsored by, or affiliated with Scott J.
 +Goldman, scottjg/qemu-vfio-apple, utmapp/qemu, utmapp/virglrenderer, or their
 +maintainers.
 +
@@ -5871,11 +5871,11 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +   integration, SPICE GL display operation, native host-surface handoff where
 +   supported, and related QEMU UI/runtime source changes.
 +
-+4. OpenResearchTools vEGPU Machine final integration layer
++4. OpenResearchTools PEGPU Machine final integration layer
 +   Maintainer: OpenResearchTools
 +   Source-bundle patch:
 +     patch-stack/03-openresearchtools-vfiouserhostapp-core/0001-openresearchtools-vfiouserhostapp-core.patch
-+   Scope: vEGPU Machine host-app integration, no-SIP/ad-hoc build flow,
++   Scope: PEGPU Machine host-app integration, no-SIP/ad-hoc build flow,
 +   app-bundle QEMU embedding, guest apple-dma package bundling, DriverKit
 +   activation UI, release packaging, display-dependency build integration,
 +   and notice/license generation.
@@ -5937,9 +5937,9 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +
 +### Machine host, launcher, and DriverKit payload
 +
-+- `Contents/MacOS/vEGPU Machine`
++- `Contents/MacOS/PEGPU Machine`
 +- `Contents/MacOS/qemu-vfio-apple`
-+- `Contents/Library/SystemExtensions/com.vegpu.machine.VFIOUserPCIDriver.dext`
++- `Contents/Library/SystemExtensions/com.pegpu.machine.VFIOUserPCIDriver.dext`
 +- License/notice: GPL-side QEMU-derived source layer; see LICENSES.
 +- Source metadata: `notice-generator-output/license-files/machine-integration/SOURCE_INFO.txt`
  
@@ -5968,7 +5968,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +        printf -- "### Guest tools payload\n\n"
 +        guest_tool_lines "$GUEST_TOOLS_DIR/manifest.json"
 +        guest_tool_lines "$GUEST_TOOLS_DIR/SHA512SUMS"
-+        guest_tool_lines "$GUEST_TOOLS_DIR/vegpu-guest-driver-bundle.tar.gz"
++        guest_tool_lines "$GUEST_TOOLS_DIR/pegpu-guest-driver-bundle.tar.gz"
 +        guest_tool_lines "$GUEST_TOOLS_DIR/packages/*.deb"
 +        guest_tool_lines "$GUEST_TOOLS_DIR/source/*.tar.gz"
 +        printf -- "\n"
@@ -5978,12 +5978,12 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +cat >> "$OUT_DIR/NOTICES" <<'EOF'
  ## Component notices
 +
-+### vEGPU Machine GPL-side host, launcher, and DriverKit integration
++### PEGPU Machine GPL-side host, launcher, and DriverKit integration
 +
 +- Release payload entries (when present):
-+  - `Contents/MacOS/vEGPU Machine`
++  - `Contents/MacOS/PEGPU Machine`
 +  - `Contents/MacOS/qemu-vfio-apple`
-+  - `Contents/Library/SystemExtensions/com.vegpu.machine.VFIOUserPCIDriver.dext`
++  - `Contents/Library/SystemExtensions/com.pegpu.machine.VFIOUserPCIDriver.dext`
 +- License/notice: GPL-side QEMU-derived source layer. File-level SPDX identifiers
 +  and copyright notices remain authoritative.
 +- License text: see LICENSES.
@@ -6041,7 +6041,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +  - `pci.ids`
 +- Purpose: downloaded runtime data file used by `qemu-vfio-apple list-devices`
 +  for PCI vendor/device names.
-+- License: `GPL-2.0-or-later OR BSD-3-Clause`; vEGPU Machine uses the
++- License: `GPL-2.0-or-later OR BSD-3-Clause`; PEGPU Machine uses the
 +  BSD-3-Clause option for this bundled data file.
 +- License text: see LICENSES.
 +- Source metadata: source artifact `notice-generator-output/license-files/pci.ids/SOURCE_INFO.txt`
@@ -6055,7 +6055,7 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
 +  - `manifest.json`
 +  - `packages/apple-dma-*.deb`
 +  - `source/apple-dma-*.tar.gz`
-+  - `vegpu-guest-driver-bundle.tar.gz`
++  - `pegpu-guest-driver-bundle.tar.gz`
 +- License/notice: guest-driver files keep the notices present in source; the
 +  apple_dma C and header files carry `GPL-2.0-or-later` SPDX notices.
 +- License text: see LICENSES.
@@ -6404,11 +6404,11 @@ index 1a6325d057c9156448b6f539f125a065d70f0bcb..4e463222862289e2231ba7a3144d9c14
  EOF
  
  log "wrote notice bundle to: $OUT_DIR"
-diff --git a/contrib/apple-vfio/scripts/update-vegpu-machine-icon.sh b/contrib/apple-vfio/scripts/update-vegpu-machine-icon.sh
+diff --git a/contrib/apple-vfio/scripts/update-pegpu-machine-icon.sh b/contrib/apple-vfio/scripts/update-pegpu-machine-icon.sh
 new file mode 100755
 index 0000000000000000000000000000000000000000..52f66031c462e00b6bffcea62b059a033996c24f
 --- /dev/null
-+++ b/contrib/apple-vfio/scripts/update-vegpu-machine-icon.sh
++++ b/contrib/apple-vfio/scripts/update-pegpu-machine-icon.sh
 @@ -0,0 +1,27 @@
 +#!/usr/bin/env bash
 +# Modified by OpenResearchTools, 2026-05-26.
@@ -6417,7 +6417,7 @@ index 0000000000000000000000000000000000000000..52f66031c462e00b6bffcea62b059a03
 +
 +HERE="$(cd "$(dirname "$0")" && pwd)"
 +APPLE_VFIO_DIR="$(cd "$HERE/.." && pwd)"
-+SRC="${1:-$APPLE_VFIO_DIR/Branding/vEGPU-Machine-icon-source.png}"
++SRC="${1:-$APPLE_VFIO_DIR/Branding/PEGPU-Machine-icon-source.png}"
 +ICONSET="$APPLE_VFIO_DIR/VFIOUserHostApp/Assets.xcassets/AppIcon.appiconset"
 +
 +if [[ ! -f "$SRC" ]]; then
@@ -6436,7 +6436,7 @@ index 0000000000000000000000000000000000000000..52f66031c462e00b6bffcea62b059a03
 +sips -z 512 512 "$SRC" --out "$ICONSET/icon_256x256@2x.png" >/dev/null
 +sips -z 512 512 "$SRC" --out "$ICONSET/icon_512x512.png" >/dev/null
 +sips -z 1024 1024 "$SRC" --out "$ICONSET/icon_512x512@2x.png" >/dev/null
-+echo "updated vEGPU Machine app icon assets from $SRC"
++echo "updated PEGPU Machine app icon assets from $SRC"
 diff --git a/hw/vfio/apple-auto.c b/hw/vfio/apple-auto.c
 new file mode 100644
 index 0000000000000000000000000000000000000000..8a7163015886e83552c608e99c2c27ae338bb751

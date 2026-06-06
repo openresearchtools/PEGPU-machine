@@ -1,7 +1,7 @@
 # Modified by OpenResearchTools, 2026-05-26.
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-name: Build vEGPU Machine no-SIP package
+name: Build PEGPU Machine no-SIP package
 
 on:
   workflow_call:
@@ -70,13 +70,13 @@ jobs:
       - name: Checkout patch control branch
         uses: actions/checkout@v6
         with:
-          repository: openresearchtools/vEGPU-machine
+          repository: openresearchtools/PEGPU-machine
           path: patch-control
 
       - name: Checkout clean QEMU base
         uses: actions/checkout@v6
         with:
-          repository: openresearchtools/vEGPU-machine
+          repository: openresearchtools/PEGPU-machine
           ref: base
           path: qemu-source
           persist-credentials: false
@@ -126,7 +126,7 @@ jobs:
       - name: Validate guest tools
         run: |
           test -f artifacts/guest-tools/manifest.json
-          test -f artifacts/guest-tools/vegpu-guest-driver-bundle.tar.gz
+          test -f artifacts/guest-tools/pegpu-guest-driver-bundle.tar.gz
           test -f artifacts/guest-tools/SHA512SUMS
           test ! -d artifacts/guest-tools/work
           jq -e '.driver.dkmsPackages | length == 1' artifacts/guest-tools/manifest.json
@@ -143,7 +143,7 @@ jobs:
       - name: Upload guest tools
         uses: actions/upload-artifact@v7
         with:
-          name: vegpu-guest-driver-debian13-arm64-dkms
+          name: pegpu-guest-driver-debian13-arm64-dkms
           path: qemu-source/artifacts/guest-tools
           if-no-files-found: error
 
@@ -159,13 +159,13 @@ jobs:
       - name: Checkout patch control branch
         uses: actions/checkout@v6
         with:
-          repository: openresearchtools/vEGPU-machine
+          repository: openresearchtools/PEGPU-machine
           path: patch-control
 
       - name: Checkout clean QEMU base
         uses: actions/checkout@v6
         with:
-          repository: openresearchtools/vEGPU-machine
+          repository: openresearchtools/PEGPU-machine
           ref: base
           path: qemu-source
           persist-credentials: false
@@ -236,13 +236,13 @@ jobs:
       - name: Restore display dependency cache
         uses: actions/cache@v5
         with:
-          path: ~/.cache/vegpu/qemu-display-deps
+          path: ~/.cache/pegpu/qemu-display-deps
           key: macos26-arm64-nosip-display-deps-opengl-virgl-v2-${{ hashFiles('patch-control/patch-stack/**') }}
 
       - name: Build display dependencies
         id: display-deps
         run: |
-          DISPLAY_DEPS="$HOME/.cache/vegpu/qemu-display-deps"
+          DISPLAY_DEPS="$HOME/.cache/pegpu/qemu-display-deps"
           DISPLAY_SRC="$RUNNER_TEMP/qemu-display-src"
           DEPS_PC="$DISPLAY_DEPS/lib/pkgconfig:$DISPLAY_DEPS/share/pkgconfig:${PKG_CONFIG_PATH:-}"
           if PKG_CONFIG_PATH="$DEPS_PC" pkg-config --modversion epoxy | grep -Fx '1.5.10' && \
@@ -416,7 +416,7 @@ jobs:
       - name: Upload QEMU runtime
         uses: actions/upload-artifact@v7
         with:
-          name: vegpu-qemu-runtime-macos-arm64
+          name: pegpu-qemu-runtime-macos-arm64
           path: qemu-source/artifacts/qemu-runtime
           if-no-files-found: error
 
@@ -435,13 +435,13 @@ jobs:
       - name: Checkout patch control branch
         uses: actions/checkout@v6
         with:
-          repository: openresearchtools/vEGPU-machine
+          repository: openresearchtools/PEGPU-machine
           path: patch-control
 
       - name: Checkout clean QEMU base
         uses: actions/checkout@v6
         with:
-          repository: openresearchtools/vEGPU-machine
+          repository: openresearchtools/PEGPU-machine
           ref: base
           path: qemu-source
           persist-credentials: false
@@ -481,13 +481,13 @@ jobs:
       - name: Download guest tools
         uses: actions/download-artifact@v8
         with:
-          pattern: vegpu-guest-driver-debian13-arm64-*
+          pattern: pegpu-guest-driver-debian13-arm64-*
           path: qemu-source/artifacts/guest-tools-parts
 
       - name: Download QEMU runtime
         uses: actions/download-artifact@v8
         with:
-          name: vegpu-qemu-runtime-macos-arm64
+          name: pegpu-qemu-runtime-macos-arm64
           path: qemu-source/artifacts/qemu-runtime
 
       - name: Restore QEMU runtime
@@ -599,11 +599,11 @@ jobs:
           ARCHS: arm64
           ONLY_ACTIVE_ARCH: "NO"
           QEMU_DIST_DIR: ${{ steps.qemu-runtime.outputs.dist }}
-          SOURCE_ARCHIVE_DIR: ${{ runner.temp }}/vegpu-machine-source-inputs/third-party-sources
+          SOURCE_ARCHIVE_DIR: ${{ runner.temp }}/pegpu-machine-source-inputs/third-party-sources
           MARKETING_VERSION: ${{ steps.version.outputs.marketing_version }}
           CURRENT_PROJECT_VERSION: ${{ steps.version.outputs.build_number }}
-          VGPU_PUBLISH_RELEASE: ${{ inputs.publish_release }}
-          VGPU_RELEASE_TAG: v${{ steps.version.outputs.marketing_version }}
+          PEGPU_PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          PEGPU_RELEASE_TAG: v${{ steps.version.outputs.marketing_version }}
 
       - name: Validate bundled tools
         run: |
@@ -611,14 +611,14 @@ jobs:
           DEXT="${{ steps.nosip.outputs.dext }}"
           PROBE="$RUNNER_TEMP/probe.qcow2"
           test -d "$APP"
-          test "$(basename "$APP")" = "vEGPU Machine.app"
+          test "$(basename "$APP")" = "PEGPU Machine.app"
           test -d "$DEXT"
-          test -x "$APP/Contents/MacOS/vEGPU Machine"
+          test -x "$APP/Contents/MacOS/PEGPU Machine"
           test -x "$APP/Contents/MacOS/qemu-vfio-apple"
           test -x "$APP/Contents/MacOS/qemu-system-aarch64"
           test -x "$APP/Contents/MacOS/qemu-img"
-          test "$(plutil -extract CFBundleDisplayName raw -o - "$APP/Contents/Info.plist")" = "vEGPU Machine"
-          test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "vEGPU Machine"
+          test "$(plutil -extract CFBundleDisplayName raw -o - "$APP/Contents/Info.plist")" = "PEGPU Machine"
+          test "$(plutil -extract CFBundleExecutable raw -o - "$APP/Contents/Info.plist")" = "PEGPU Machine"
           test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "${{ steps.version.outputs.marketing_version }}"
           test "$(plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")" = "${{ steps.version.outputs.build_number }}"
           test -f "$APP/Contents/Resources/manifest.json"
@@ -627,11 +627,11 @@ jobs:
           import sys
           with open(sys.argv[1], "r", encoding="utf-8") as f:
               manifest = json.load(f)
-          assert manifest["product"] == "vEGPU Machine"
+          assert manifest["product"] == "PEGPU Machine"
           assert manifest["version"]
           assert manifest["build"]
           assert manifest["distribution"]["format"] == "zip"
-          assert manifest["distribution"]["installPath"] == "/Applications/vEGPU Machine.app"
+          assert manifest["distribution"]["installPath"] == "/Applications/PEGPU Machine.app"
           assert manifest["guestTools"]["driverVersion"]
           dkms = manifest["guestTools"]["dkmsPackages"]
           assert len(dkms) == 1
@@ -671,7 +671,7 @@ jobs:
           test ! -e "$GENERATED_NOTICES/license-files/qemu/$(printf 'pc-bios-%s' README)"
           test -f "$GENERATED_NOTICES/license-files/machine-integration/GPL-2.0.txt"
           test -f "$GENERATED_NOTICES/license-files/machine-integration/SOURCE_INFO.txt"
-          grep -F 'Runtime-Payloads: Contents/MacOS/vEGPU Machine; Contents/MacOS/qemu-vfio-apple; Contents/Library/SystemExtensions/com.vegpu.machine.VFIOUserPCIDriver.dext' "$GENERATED_NOTICES/license-files/machine-integration/SOURCE_INFO.txt"
+          grep -F 'Runtime-Payloads: Contents/MacOS/PEGPU Machine; Contents/MacOS/qemu-vfio-apple; Contents/Library/SystemExtensions/com.pegpu.machine.VFIOUserPCIDriver.dext' "$GENERATED_NOTICES/license-files/machine-integration/SOURCE_INFO.txt"
           test -f "$GENERATED_NOTICES/license-files/apple-dma/GPL-2.0.txt"
           test -f "$GENERATED_NOTICES/license-files/pci.ids/BSD-3-Clause.txt"
           test -f "$GENERATED_NOTICES/license-files/pci.ids/SOURCE_INFO.txt"
@@ -699,7 +699,7 @@ jobs:
               -print
           )"
           if [[ -n "$MACHINE_ANGLE_PAYLOADS" ]]; then
-            printf 'vEGPU Machine must not vendor app-side WebKit/ANGLE payloads:\n%s\n' "$MACHINE_ANGLE_PAYLOADS" >&2
+            printf 'PEGPU Machine must not vendor app-side WebKit/ANGLE payloads:\n%s\n' "$MACHINE_ANGLE_PAYLOADS" >&2
             exit 1
           fi
           otool -L "$APP/Contents/MacOS/lib"/*.dylib "$APP/Contents/MacOS/qemu-system-aarch64" "$APP/Contents/MacOS/qemu-img" > "$RUNNER_TEMP/app-runtime-links.txt"
@@ -710,12 +710,12 @@ jobs:
           grep -F 'https://github.com/scottjg/qemu-vfio-apple' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
           grep -F 'https://github.com/utmapp/qemu' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
           grep -F 'https://github.com/pciutils/pciids' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
-          grep -F 'Contents/Library/SystemExtensions/com.vegpu.machine.VFIOUserPCIDriver.dext' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
-          grep -F 'Package/Dependency: vEGPU Machine GPL-side host, qemu-vfio-apple, and DriverKit integration' "$APP/Contents/Resources/ThirdPartyNotices/LICENSES"
+          grep -F 'Contents/Library/SystemExtensions/com.pegpu.machine.VFIOUserPCIDriver.dext' "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
+          grep -F 'Package/Dependency: PEGPU Machine GPL-side host, qemu-vfio-apple, and DriverKit integration' "$APP/Contents/Resources/ThirdPartyNotices/LICENSES"
           python3 - "$APP/Contents/Resources/ThirdPartyNotices/NOTICES" <<'PY'
           import sys
           text = open(sys.argv[1], encoding="utf-8").read()
-          needle = "License: `GPL-2.0-or-later OR BSD-3-Clause`; vEGPU Machine uses the"
+          needle = "License: `GPL-2.0-or-later OR BSD-3-Clause`; PEGPU Machine uses the"
           if text.count(needle) != 1:
               raise SystemExit(f"expected exactly one pci.ids selected-license sentence, found {text.count(needle)}")
           PY
@@ -725,13 +725,13 @@ jobs:
           BAD_NOTICE_RE='Release[-]specific[[:space:]]+reminder|Before[[:space:]]+publishing|Bundled[[:space:]]+artifacts[[:space:]]+seen|Runtime[[:space:]]+Notice[[:space:]]+Bundle|package[[:space:]]+metadata|source[[:space:]]+revision|/Users/[^[:space:]]+|/home/[^[:space:]]+'
           ! grep -R -F "$FORBIDDEN_DOMAIN" "$APP/Contents/Resources/ThirdPartyNotices"
           ! grep -R -E "$BAD_NOTICE_RE" "$APP/Contents/Resources/ThirdPartyNotices"
-          APP_STRINGS="$RUNNER_TEMP/vegpu-machine-strings.txt"
-          STRING_INPUTS=("$APP/Contents/MacOS/vEGPU Machine")
-          if [[ -f "$APP/Contents/MacOS/vEGPU Machine.debug.dylib" ]]; then
-            STRING_INPUTS+=("$APP/Contents/MacOS/vEGPU Machine.debug.dylib")
+          APP_STRINGS="$RUNNER_TEMP/pegpu-machine-strings.txt"
+          STRING_INPUTS=("$APP/Contents/MacOS/PEGPU Machine")
+          if [[ -f "$APP/Contents/MacOS/PEGPU Machine.debug.dylib" ]]; then
+            STRING_INPUTS+=("$APP/Contents/MacOS/PEGPU Machine.debug.dylib")
           fi
           strings "${STRING_INPUTS[@]}" > "$APP_STRINGS"
-          grep -F 'About vEGPU Machine' "$APP_STRINGS"
+          grep -F 'About PEGPU Machine' "$APP_STRINGS"
           grep -F 'ThirdPartyNotices' "$APP_STRINGS"
           grep -F 'Button("Notices")' contrib/apple-vfio/VFIOUserHostApp/VFIOUserHostAppApp.swift
           grep -F 'Button("Licenses")' contrib/apple-vfio/VFIOUserHostApp/VFIOUserHostAppApp.swift
@@ -834,8 +834,8 @@ jobs:
             printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '-'
           }
           VERSION_SAFE="$(safe_name "$VERSION")"
-          RELEASE_BASE="vEGPU-Machine-${VERSION_SAFE}"
-          SOURCE_BASE="vEGPU-Machine-${VERSION_SAFE}-source"
+          RELEASE_BASE="PEGPU-Machine-${VERSION_SAFE}"
+          SOURCE_BASE="PEGPU-Machine-${VERSION_SAFE}-source"
           {
             echo "release_base=$RELEASE_BASE"
             echo "source_base=$SOURCE_BASE"
@@ -856,18 +856,18 @@ jobs:
           ZIP_PATH="${{ steps.artifacts.outputs.zip }}"
           rm -rf "$PACKAGE"
           mkdir -p "$PACKAGE"
-          ditto "$APP" "$PACKAGE/vEGPU Machine.app"
+          ditto "$APP" "$PACKAGE/PEGPU Machine.app"
           ditto -c -k "$PACKAGE" "$ZIP_PATH"
-          zipinfo -1 "$ZIP_PATH" | grep -Fx 'vEGPU Machine.app/Contents/MacOS/vEGPU Machine'
-          zipinfo -1 "$ZIP_PATH" | grep -Fx 'vEGPU Machine.app/Contents/Resources/ThirdPartyNotices/NOTICES'
-          zipinfo -1 "$ZIP_PATH" | grep -Fx 'vEGPU Machine.app/Contents/Resources/ThirdPartyNotices/LICENSES'
-          zipinfo -1 "$ZIP_PATH" | grep -Fx 'vEGPU Machine.app/Contents/Resources/manifest.json'
-          zipinfo -1 "$ZIP_PATH" | grep -Fx 'vEGPU Machine.app/Contents/Resources/pci.ids'
+          zipinfo -1 "$ZIP_PATH" | grep -Fx 'PEGPU Machine.app/Contents/MacOS/PEGPU Machine'
+          zipinfo -1 "$ZIP_PATH" | grep -Fx 'PEGPU Machine.app/Contents/Resources/ThirdPartyNotices/NOTICES'
+          zipinfo -1 "$ZIP_PATH" | grep -Fx 'PEGPU Machine.app/Contents/Resources/ThirdPartyNotices/LICENSES'
+          zipinfo -1 "$ZIP_PATH" | grep -Fx 'PEGPU Machine.app/Contents/Resources/manifest.json'
+          zipinfo -1 "$ZIP_PATH" | grep -Fx 'PEGPU Machine.app/Contents/Resources/pci.ids'
           if zipinfo -1 "$ZIP_PATH" | grep -E '^THIRD_PARTY_NOTICES/'; then
             echo "release zip must not ship a root-level THIRD_PARTY_NOTICES sidecar" >&2
             exit 1
           fi
-          if zipinfo -1 "$ZIP_PATH" | grep -E '^vEGPU Machine[.]app/Contents/Resources/ThirdPartyNotices/license-files/'; then
+          if zipinfo -1 "$ZIP_PATH" | grep -E '^PEGPU Machine[.]app/Contents/Resources/ThirdPartyNotices/license-files/'; then
             echo "release app must not ship raw notice-generator license-files" >&2
             exit 1
           fi
@@ -877,7 +877,7 @@ jobs:
           APP="${{ steps.nosip.outputs.app }}"
           GENERATED_NOTICES="${{ steps.nosip.outputs.notices_dir }}"
           SOURCE_BUNDLE="${{ steps.artifacts.outputs.source_dir }}"
-          SOURCE_INPUTS="$RUNNER_TEMP/vegpu-machine-source-inputs/third-party-sources"
+          SOURCE_INPUTS="$RUNNER_TEMP/pegpu-machine-source-inputs/third-party-sources"
           BASE_QEMU_REV="ac0cc20ad2fe0b8df2e5d9458e90a095ac711ab1"
           BASE_QEMU_ARCHIVE="qemu-${BASE_QEMU_REV}.tar.gz"
           BASE_QEMU_URLS="
@@ -935,10 +935,10 @@ jobs:
           ditto "$PATCH_STACK_DIR" "$SOURCE_BUNDLE/patch-stack"
           find "$SOURCE_BUNDLE/patch-stack" -name '.DS_Store' -delete
           cat > "$SOURCE_BUNDLE/README" <<EOF
-          vEGPU Machine Source Bundle
+          PEGPU Machine Source Bundle
           ===========================
 
-          This archive accompanies the matching vEGPU Machine macOS arm64 ad-hoc binary artifact produced by this workflow run.
+          This archive accompanies the matching PEGPU Machine macOS arm64 ad-hoc binary artifact produced by this workflow run.
 
           Contents:
 
@@ -985,8 +985,8 @@ jobs:
           test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/qemu/COPYING"
           test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/machine-integration/GPL-2.0.txt"
           test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/machine-integration/SOURCE_INFO.txt"
-          grep -F 'Contents/Library/SystemExtensions/com.vegpu.machine.VFIOUserPCIDriver.dext' "$SOURCE_BUNDLE/THIRD_PARTY_NOTICES/NOTICES"
-          grep -F 'Package/Dependency: vEGPU Machine GPL-side host, qemu-vfio-apple, and DriverKit integration' "$SOURCE_BUNDLE/THIRD_PARTY_NOTICES/LICENSES"
+          grep -F 'Contents/Library/SystemExtensions/com.pegpu.machine.VFIOUserPCIDriver.dext' "$SOURCE_BUNDLE/THIRD_PARTY_NOTICES/NOTICES"
+          grep -F 'Package/Dependency: PEGPU Machine GPL-side host, qemu-vfio-apple, and DriverKit integration' "$SOURCE_BUNDLE/THIRD_PARTY_NOTICES/LICENSES"
           test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/apple-dma/GPL-2.0.txt"
           test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/pci.ids/BSD-3-Clause.txt"
           test -f "$SOURCE_BUNDLE/notice-generator-output/license-files/pci.ids/SOURCE_INFO.txt"
@@ -1025,7 +1025,7 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.marketing_version }}"
           TAG="v${VERSION}"
-          TITLE="vEGPU Machine ${VERSION}"
+          TITLE="PEGPU Machine ${VERSION}"
           PRERELEASE="${{ inputs.prerelease }}"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -1039,7 +1039,7 @@ jobs:
           else
             release_args=(
               --title "$TITLE"
-              --notes "vEGPU Machine ${VERSION}"
+              --notes "PEGPU Machine ${VERSION}"
             )
             if [[ "$PRERELEASE" == "true" ]]; then
               release_args+=(--prerelease)

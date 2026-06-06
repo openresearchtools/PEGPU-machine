@@ -1,8 +1,8 @@
-vEGPU Machine License
+PEGPU Machine License
 =====================
 
 This repository contains a patch stack and release workflow for building
-vEGPU Machine from QEMU-derived source.
+PEGPU Machine from QEMU-derived source.
 
 The source tree produced by applying this repository's patch stack to the
 recorded QEMU base is a QEMU-derived distribution. The QEMU emulator as a
@@ -18,7 +18,7 @@ GPL version 2 terms applicable to QEMU.
 Firmware images, guest-driver packages, display/runtime libraries, and other
 third-party components distributed with a binary release are separate works
 bundled for user convenience. They carry their own copyright and license
-notices. Binary releases of vEGPU Machine include generated NOTICES and
+notices. Binary releases of PEGPU Machine include generated NOTICES and
 LICENSES files that identify the bundled runtime payload and include the
 license texts collected for that release.
 
@@ -29,5 +29,5 @@ patch hunk states a more specific license.
 
 QEMU is a trademark of Fabrice Bellard. This repository uses the QEMU name
 only to identify the upstream QEMU project, the recorded QEMU base revision,
-and QEMU-derived source/runtime components. vEGPU Machine is not endorsed by,
+and QEMU-derived source/runtime components. PEGPU Machine is not endorsed by,
 sponsored by, or affiliated with Fabrice Bellard or the QEMU project.
