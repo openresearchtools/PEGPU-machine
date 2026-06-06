@@ -22,7 +22,7 @@ on:
       prerelease:
         description: "Mark the GitHub Release as a pre-release when publishing."
         required: false
-        default: true
+        default: false
         type: boolean
   workflow_dispatch:
     inputs:
@@ -42,7 +42,7 @@ on:
       prerelease:
         description: "Mark the GitHub Release as a pre-release when publishing."
         required: true
-        default: true
+        default: false
         type: boolean
 
 permissions:
