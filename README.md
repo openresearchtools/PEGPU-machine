@@ -1,5 +1,11 @@
 # PEGPU Machine
 
+This repository is the lower-level PEGPU machine mechanics app: DriverKit host control, guest DMA driver packaging, and the customised QEMU base/runtime used by PEGPU.
+
+If you want the painless runtime launcher, GUI, setup flow, and day-to-day user app, use the main PEGPU repository instead:
+
+https://github.com/openresearchtools/PEGPU
+
 PEGPU Machine is a macOS runtime app that manages the DriverKit host and bundled QEMU runtime used by PEGPU virtual machines.
 
 It includes QEMU, Apple VFIO, and bundled guest-driver components distributed under open-source licenses. QEMU is distributed as a GPL version 2 work; bundled dependencies carry their own notices and license texts.
