@@ -1,0 +1,102 @@
+diff --git a/contrib/apple-dma/linux/apple_dma_main.c b/contrib/apple-dma/linux/apple_dma_main.c
+index 8dfa0c2cb4..d3527d7c50 100644
+--- a/contrib/apple-dma/linux/apple_dma_main.c
++++ b/contrib/apple-dma/linux/apple_dma_main.c
+@@ -28,6 +28,7 @@
+ #include <linux/slab.h>
+ #include <linux/spinlock.h>
+ #include <linux/version.h>
++#include <linux/wait.h>
+ 
+ #include <linux/hash.h>
+ 
+@@ -195,6 +196,7 @@ struct apple_dma_map_entry {
+ 
+ #define DMA_WINDOW_HT_BITS	12
+ #define DMA_WINDOW_HT_SIZE	(1 << DMA_WINDOW_HT_BITS)
++#define APPLE_DMA_MAX_WINDOWS	5600
+ 
+ struct apple_dma_dev {
+ 	struct list_head instance_node;	/* linkage in apple_dma_instances */
+@@ -202,6 +204,7 @@ struct apple_dma_dev {
+ 	void __iomem *bar;
+ 	struct apple_dma_cmd_page *cmd_page;
+ 	struct mutex batch_lock;
++	wait_queue_head_t window_wait;
+ 	spinlock_t maps_lock;
+ 	struct list_head maps;
+ 	struct pci_dev *managed_pdev;
+@@ -517,6 +520,22 @@ static struct dma_window *wnd_create(struct apple_dma_dev *ad,
+ 	return w;
+ }
+ 
++static int wnd_wait_for_slot(struct apple_dma_dev *ad)
++{
++	while (ad->window_count >= APPLE_DMA_MAX_WINDOWS) {
++		mutex_unlock(&ad->batch_lock);
++		wait_event(ad->window_wait,
++			   READ_ONCE(ad->window_count) < APPLE_DMA_MAX_WINDOWS ||
++			   !READ_ONCE(ad->ready));
++		mutex_lock(&ad->batch_lock);
++
++		if (!ad->ready)
++			return -ENODEV;
++	}
++
++	return 0;
++}
++
+ /*
+  * Decrement a window's refcount. If it drops to zero, unmap the window
+  * from the device and free it. Returns true if the window was destroyed.
+@@ -540,6 +559,7 @@ static bool wnd_put(struct apple_dma_dev *ad, struct dma_window *w)
+ 	apple_dma_device_unmap(ad, w->iova, w->size);
+ 	hlist_del(&w->hnode);
+ 	ad->window_count--;
++	wake_up_all(&ad->window_wait);
+ 	kfree(w);
+ 	return true;
+ }
+@@ -756,6 +776,18 @@ static int apple_dma_map_locked(struct apple_dma_dev *ad, phys_addr_t gpa,
+ 
+ 	w = wnd_lookup(ad, base, wsize);
+ 	if (!w) {
++		int ret;
++
++		ret = wnd_wait_for_slot(ad);
++		if (ret) {
++			kfree(e);
++			return ret;
++		}
++
++		w = wnd_lookup(ad, base, wsize);
++		if (w)
++			goto found_window;
++
+ 		w = wnd_create(ad, base, wsize);
+ 		if (IS_ERR(w)) {
+ 			kfree(e);
+@@ -763,6 +795,7 @@ static int apple_dma_map_locked(struct apple_dma_dev *ad, phys_addr_t gpa,
+ 		}
+ 	}
+ 
++found_window:
+ 	dma_addr = w->dma_addr + (gpa - base);
+ 	w->refcount++;
+ 
+@@ -1458,6 +1491,7 @@ static int apple_dma_probe(struct pci_dev *pdev,
+ 	ad->pdev = pdev;
+ 	INIT_LIST_HEAD(&ad->instance_node);
+ 	mutex_init(&ad->batch_lock);
++	init_waitqueue_head(&ad->window_wait);
+ 	spin_lock_init(&ad->maps_lock);
+ 	INIT_LIST_HEAD(&ad->maps);
+ 
+@@ -1572,6 +1606,7 @@ static void apple_dma_remove(struct pci_dev *pdev)
+ 		return;
+ 
+ 	ad->ready = false;
++	wake_up_all(&ad->window_wait);
+ 	apple_dma_remove_instance(ad);
+ 	apple_dma_release_resources(pdev, ad);
+ 	kfree(ad);
