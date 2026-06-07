@@ -104,6 +104,7 @@ index 0000000000000000000000000000000000000000..7a48088fd8fd63764049b875bdbe955d
 +    --exclude='Module.symvers' \
 +    --exclude='modules.order' \
 +    -cf - . | tar -C "$dest" -xf -
++  sed -i 's/window_shift=18/window_shift=17/' "$dest/apple-dma-options.conf"
 +}
 +
 +sha512_file() {
