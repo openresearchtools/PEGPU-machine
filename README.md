@@ -1,19 +1,23 @@
 # PEGPU Machine
 
-> **User documentation and installer:** <https://pegpu.com>
+> [!IMPORTANT]
+> **PEGPU Machine Documentation and Installation**
 >
-> Release downloads, installation instructions, setup warnings, screenshots, and
-> usage notes are maintained on the PEGPU website. This repository is primarily
-> for lower-level Machine runtime source, QEMU/VFIO mechanics, licensing, and
-> developer documentation.
+> For installation instructions and documentation on using PEGPU Machine, refer
+> directly to the official PEGPU resource:
+>
+> **https://pegpu.com**
 
-This repository is the lower-level PEGPU machine mechanics app: DriverKit host control, guest DMA driver packaging, and the customised QEMU base/runtime used by PEGPU.
+The PEGPU Machine repository provides the infrastructure to operate the Linux
+virtual machine specifically required by PEGPU, enabling NVIDIA Thunderbolt
+external GPUs (eGPUs) to function on Apple Silicon Macs. It complements the
+main PEGPU application and maintains clear architectural and licensing
+distinctions.
 
-If you want the painless runtime launcher, GUI, setup flow, and day-to-day user app, use the main PEGPU repository instead:
+For deeper insights into development, architecture, or contribution guidelines,
+refer to the main PEGPU repository:
 
 https://github.com/openresearchtools/PEGPU
-
-PEGPU Machine is a macOS runtime app that manages the DriverKit host and bundled QEMU runtime used by PEGPU virtual machines.
 
 It includes QEMU, Apple VFIO, and bundled guest-driver components distributed under open-source licenses. QEMU is distributed as a GPL version 2 work; bundled dependencies carry their own notices and license texts.
 
