@@ -1,10 +1,11 @@
 # PEGPU Machine
 
-> **Install and use PEGPU from the website: <https://pegpu.com>**
+> **User documentation and installer:** <https://pegpu.com>
 >
-> **If you are not developing the lower-level Machine runtime, the website is
-> the source of truth for the full description, release download, installation
-> manual, setup warnings, screenshots, and day-to-day user instructions.**
+> Release downloads, installation instructions, setup warnings, screenshots, and
+> usage notes are maintained on the PEGPU website. This repository is primarily
+> for lower-level Machine runtime source, QEMU/VFIO mechanics, licensing, and
+> developer documentation.
 
 This repository is the lower-level PEGPU machine mechanics app: DriverKit host control, guest DMA driver packaging, and the customised QEMU base/runtime used by PEGPU.
 
