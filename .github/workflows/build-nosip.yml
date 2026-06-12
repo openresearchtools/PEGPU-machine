@@ -128,10 +128,23 @@ jobs:
 
       - name: Validate guest tools
         run: |
-          test -f artifacts/guest-tools/manifest.json
-          test -f artifacts/guest-tools/pegpu-guest-driver-bundle.tar.gz
-          test -f artifacts/guest-tools/SHA512SUMS
-          test ! -d artifacts/guest-tools/work
+          echo "Guest tools artifact tree:"
+          find artifacts -maxdepth 4 -type f -print | sort || true
+          require_artifact_file() {
+            if [ ! -f "$1" ]; then
+              echo "missing expected guest-tools artifact: $1" >&2
+              find artifacts -maxdepth 4 -type f -print | sort >&2 || true
+              exit 1
+            fi
+          }
+          require_artifact_file artifacts/guest-tools/manifest.json
+          require_artifact_file artifacts/guest-tools/pegpu-guest-driver-bundle.tar.gz
+          require_artifact_file artifacts/guest-tools/SHA512SUMS
+          if [ -d artifacts/guest-tools/work ]; then
+            echo "guest-tools work directory leaked into artifacts" >&2
+            find artifacts/guest-tools/work -maxdepth 3 -print >&2
+            exit 1
+          fi
           echo "Guest tools manifest:"
           cat artifacts/guest-tools/manifest.json
           jq -e '.driver.dkmsPackages | length == 1' artifacts/guest-tools/manifest.json
