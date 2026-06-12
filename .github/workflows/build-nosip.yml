@@ -132,7 +132,10 @@ jobs:
           jq -e '.driver.dkmsPackages | length == 1' artifacts/guest-tools/manifest.json
           jq -e 'has("kernels") | not' artifacts/guest-tools/manifest.json
           jq -e '.driver | has("prebuiltPackages") | not' artifacts/guest-tools/manifest.json
-          find artifacts/guest-tools/packages -type f -name 'apple-dma-dkms_*.deb' -print -quit | grep -q .
+          DKMS_DEB="$(find artifacts/guest-tools/packages -type f -name 'apple-dma-dkms_*.deb' -print -quit)"
+          test -n "$DKMS_DEB"
+          dpkg-deb -c "$DKMS_DEB" | grep -q './usr/sbin/apple-dma-config'
+          dpkg-deb -c "$DKMS_DEB" | grep -q './usr/share/apple-dma/apple-dma-options.conf'
           if find artifacts/guest-tools/packages -type f -name 'apple-dma-modules-*.deb' -print -quit | grep -q .; then
             echo "guest tools must not contain kernel-versioned DMA module packages" >&2
             exit 1
@@ -655,7 +658,10 @@ jobs:
           diff -u "$RUNNER_TEMP/expected-app-qemu-data.txt" "$RUNNER_TEMP/actual-app-qemu-data.txt"
           test -f "$APP/Contents/Resources/guest-tools/manifest.json"
           test ! -d "$APP/Contents/Resources/guest-tools/work"
-          find "$APP/Contents/Resources/guest-tools/packages" -type f -name 'apple-dma-dkms_*.deb' -print -quit | grep -q .
+          DKMS_DEB="$(find "$APP/Contents/Resources/guest-tools/packages" -type f -name 'apple-dma-dkms_*.deb' -print -quit)"
+          test -n "$DKMS_DEB"
+          dpkg-deb -c "$DKMS_DEB" | grep -q './usr/sbin/apple-dma-config'
+          dpkg-deb -c "$DKMS_DEB" | grep -q './usr/share/apple-dma/apple-dma-options.conf'
           if find "$APP/Contents/Resources/guest-tools/packages" -type f -name 'apple-dma-modules-*.deb' -print -quit | grep -q .; then
             echo "Machine app must not bundle kernel-versioned apple DMA module packages" >&2
             exit 1

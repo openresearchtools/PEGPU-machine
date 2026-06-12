@@ -137,12 +137,274 @@ index 0000000000000000000000000000000000000000..7a48088fd8fd63764049b875bdbe955d
 +  jq -n --arg path "$rel" --arg sha512 "$sha" '{path:$path, sha512:$sha512}'
 +}
 +
++install_config_helper() {
++  local root="$1"
++  install -d "$root/usr/sbin"
++  cat >"$root/usr/sbin/apple-dma-config" <<'SCRIPT'
++#!/usr/bin/env bash
++set -euo pipefail
++
++CONFIG_ROOT="${APPLE_DMA_CONFIG_ROOT:-}"
++CONFIG_FILE="${APPLE_DMA_CONFIG_FILE:-$CONFIG_ROOT/etc/modprobe.d/apple-dma-options.conf}"
++ACTIVE_FILE="${APPLE_DMA_ACTIVE_FILE:-$CONFIG_ROOT/sys/module/apple_dma/parameters/window_shift}"
++TEMPLATE_FILE="${APPLE_DMA_TEMPLATE_FILE:-$CONFIG_ROOT/usr/share/apple-dma/apple-dma-options.conf}"
++APPLY_TEXT="Saved. To apply cleanly, stop the PEGPU server, shut down the VM, unplug the eGPU, plug it back in, then start PEGPU again."
++
++usage() {
++  cat <<'EOF'
++usage:
++  apple-dma-config list [--json]
++  apple-dma-config get [--json]
++  apple-dma-config status [--json]
++  apple-dma-config set --coalescing off|128kb|256kb|512kb
++  apple-dma-config set off|128kb|256kb|512kb
++  apple-dma-config reset
++EOF
++}
++
++normalize_shift() {
++  local raw
++  raw="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
++  case "$raw" in
++    off|none|disabled|disable|0) printf '%s\n' 0 ;;
++    stable|128|128k|128kb|17) printf '%s\n' 17 ;;
++    gaming|game|256|256k|256kb|18) printf '%s\n' 18 ;;
++    experimental|experiment|512|512k|512kb|19) printf '%s\n' 19 ;;
++    *) return 1 ;;
++  esac
++}
++
++mode_key() {
++  case "$1" in
++    0) printf '%s\n' off ;;
++    17) printf '%s\n' 128kb ;;
++    18) printf '%s\n' 256kb ;;
++    19) printf '%s\n' 512kb ;;
++    *) printf 'custom-%s\n' "$1" ;;
++  esac
++}
++
++mode_label() {
++  case "$1" in
++    0) printf '%s\n' "Off" ;;
++    17) printf '%s\n' "128 KB - Stable" ;;
++    18) printf '%s\n' "256 KB - Gaming" ;;
++    19) printf '%s\n' "512 KB - Experimental" ;;
++    *) printf 'Custom (window_shift=%s)\n' "$1" ;;
++  esac
++}
++
++mode_kb() {
++  case "$1" in
++    0) printf '%s\n' 0 ;;
++    17|18|19) printf '%s\n' "$(( (1 << $1) / 1024 ))" ;;
++    *) printf '%s\n' null ;;
++  esac
++}
++
++mode_json() {
++  local shift="$1"
++  printf '{"key":"%s","label":"%s","shift":%s,"kilobytes":%s}' \
++    "$(mode_key "$shift")" \
++    "$(mode_label "$shift")" \
++    "$shift" \
++    "$(mode_kb "$shift")"
++}
++
++saved_shift() {
++  local value
++  if [ -f "$CONFIG_FILE" ]; then
++    value="$(awk '
++      $1 == "options" && $2 == "apple_dma" {
++        for (i = 3; i <= NF; i++) {
++          if ($i ~ /^window_shift=/) {
++            sub(/^window_shift=/, "", $i)
++            print $i
++            exit
++          }
++        }
++      }
++    ' "$CONFIG_FILE" 2>/dev/null || true)"
++    if printf '%s\n' "$value" | grep -Eq '^[0-9]+$'; then
++      printf '%s\n' "$value"
++      return 0
++    fi
++  fi
++  printf '%s\n' 17
++}
++
++active_shift() {
++  local value
++  [ -f "$ACTIVE_FILE" ] || return 0
++  value="$(tr -d '[:space:]' <"$ACTIVE_FILE" 2>/dev/null || true)"
++  printf '%s\n' "$value" | grep -Eq '^[0-9]+$' || return 0
++  printf '%s\n' "$value"
++}
++
++ensure_config_file() {
++  install -d "$(dirname "$CONFIG_FILE")"
++  if [ -f "$CONFIG_FILE" ]; then
++    return 0
++  fi
++  if [ -f "$TEMPLATE_FILE" ]; then
++    install -m 0644 "$TEMPLATE_FILE" "$CONFIG_FILE"
++  else
++    cat >"$CONFIG_FILE" <<'EOF'
++# /etc/modprobe.d/apple-dma-options.conf
++#
++# Module options for apple_dma.
++# window_shift: 0=off, 17=128K, 18=256K, 19=512K.
++options apple_dma window_shift=17 enable_quirks=1
++
++# apple-vfio passthrough implements MSI/MSI-X but not legacy PCI INTx.
++options snd-hda-intel enable_msi=1
++EOF
++    chmod 0644 "$CONFIG_FILE"
++  fi
++}
++
++write_shift() {
++  local shift="$1" tmp
++  [ "$(id -u)" -eq 0 ] || {
++    printf 'apple-dma-config set must run as root.\n' >&2
++    return 1
++  }
++  ensure_config_file
++  tmp="$(mktemp)"
++  awk -v shift="$shift" '
++    BEGIN { changed = 0 }
++    $1 == "options" && $2 == "apple_dma" {
++      found = 0
++      for (i = 3; i <= NF; i++) {
++        if ($i ~ /^window_shift=/) {
++          $i = "window_shift=" shift
++          found = 1
++        }
++      }
++      if (!found) {
++        $0 = $0 " window_shift=" shift
++      }
++      changed = 1
++    }
++    { print }
++    END {
++      if (!changed) {
++        print "options apple_dma window_shift=" shift " enable_quirks=1"
++      }
++    }
++  ' "$CONFIG_FILE" >"$tmp"
++  install -m 0644 "$tmp" "$CONFIG_FILE"
++  rm -f "$tmp"
++  if [ -z "$CONFIG_ROOT" ] && command -v update-initramfs >/dev/null 2>&1; then
++    update-initramfs -u >/dev/null 2>&1 || true
++  fi
++}
++
++print_list() {
++  if [ "${1:-}" = "--json" ]; then
++    printf '{"modes":[%s,%s,%s,%s]}\n' \
++      "$(mode_json 0)" "$(mode_json 17)" "$(mode_json 18)" "$(mode_json 19)"
++    return 0
++  fi
++  printf '%-8s %-24s %s\n' "MODE" "LABEL" "WINDOW_SHIFT"
++  printf '%-8s %-24s %s\n' "off" "Off" "0"
++  printf '%-8s %-24s %s\n' "128kb" "128 KB - Stable" "17"
++  printf '%-8s %-24s %s\n' "256kb" "256 KB - Gaming" "18"
++  printf '%-8s %-24s %s\n' "512kb" "512 KB - Experimental" "19"
++}
++
++print_get() {
++  local json="${1:-}" saved active restart=false
++  saved="$(saved_shift)"
++  active="$(active_shift || true)"
++  if [ -n "$active" ] && [ "$active" != "$saved" ]; then
++    restart=true
++  fi
++  if [ "$json" = "--json" ]; then
++    printf '{"saved":%s,"active":' "$(mode_json "$saved")"
++    if [ -n "$active" ]; then
++      mode_json "$active"
++    else
++      printf 'null'
++    fi
++    printf ',"restartRequired":%s,"applyNote":"%s"}\n' "$restart" "$APPLY_TEXT"
++    return 0
++  fi
++  printf 'Saved mode:  %s\n' "$(mode_label "$saved")"
++  if [ -n "$active" ]; then
++    printf 'Active mode: %s\n' "$(mode_label "$active")"
++  else
++    printf 'Active mode: unknown (apple_dma is not loaded)\n'
++  fi
++  if [ "$restart" = true ]; then
++    printf 'Restart needed: yes\n'
++  else
++    printf 'Restart needed: no\n'
++  fi
++}
++
++cmd="${1:-}"
++case "$cmd" in
++  list)
++    print_list "${2:-}"
++    ;;
++  get|status)
++    print_get "${2:-}"
++    ;;
++  set)
++    shift
++    value=""
++    while [ "$#" -gt 0 ]; do
++      case "$1" in
++        --coalescing)
++          shift
++          value="${1:-}"
++          ;;
++        --coalescing=*)
++          value="${1#*=}"
++          ;;
++        *)
++          value="$1"
++          ;;
++      esac
++      shift || true
++    done
++    shift_value="$(normalize_shift "$value")" || {
++      printf 'unsupported coalescing mode: %s\n' "$value" >&2
++      usage >&2
++      exit 2
++    }
++    write_shift "$shift_value"
++    printf 'Saved mode: %s\n' "$(mode_label "$shift_value")"
++    printf '%s\n' "$APPLY_TEXT"
++    ;;
++  reset)
++    write_shift 17
++    printf 'Saved mode: %s\n' "$(mode_label 17)"
++    printf '%s\n' "$APPLY_TEXT"
++    ;;
++  help|--help|-h|"")
++    usage
++    ;;
++  *)
++    printf 'unknown command: %s\n' "$cmd" >&2
++    usage >&2
++    exit 2
++    ;;
++esac
++SCRIPT
++  chmod 0755 "$root/usr/sbin/apple-dma-config"
++}
++
 +build_dkms_package() {
 +  local root="$WORK_DIR/apple-dma-dkms"
 +  local package="$PKG_DIR/apple-dma-dkms_${PKG_VERSION}_all.deb"
 +
-+  mkdir -p "$root/DEBIAN" "$root/usr/src/apple-dma-$DRIVER_VERSION"
++  mkdir -p "$root/DEBIAN" "$root/usr/src/apple-dma-$DRIVER_VERSION" "$root/usr/share/apple-dma"
 +  copy_driver_source "$root/usr/src/apple-dma-$DRIVER_VERSION"
++  install -m 0644 "$root/usr/src/apple-dma-$DRIVER_VERSION/apple-dma-options.conf" \
++    "$root/usr/share/apple-dma/apple-dma-options.conf"
++  install_config_helper "$root"
 +
 +  cat >"$root/DEBIAN/control" <<EOF
 +Package: apple-dma-dkms
@@ -160,6 +422,14 @@ index 0000000000000000000000000000000000000000..7a48088fd8fd63764049b875bdbe955d
 +  cat >"$root/DEBIAN/postinst" <<EOF
 +#!/bin/sh
 +set -e
++if [ ! -f /etc/modprobe.d/apple-dma-options.conf ]; then
++  install -d /etc/modprobe.d
++  if [ -f /usr/share/apple-dma/apple-dma-options.conf ]; then
++    install -m 0644 /usr/share/apple-dma/apple-dma-options.conf /etc/modprobe.d/apple-dma-options.conf
++  else
++    printf '%s\n' 'options apple_dma window_shift=17 enable_quirks=1' >/etc/modprobe.d/apple-dma-options.conf
++  fi
++fi
 +if command -v dkms >/dev/null 2>&1; then
 +  dkms remove -m apple-dma -v "$DRIVER_VERSION" --all >/dev/null 2>&1 || true
 +  dkms add -m apple-dma -v "$DRIVER_VERSION" || true
