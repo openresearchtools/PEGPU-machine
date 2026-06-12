@@ -55,7 +55,7 @@ new file mode 100755
 index 0000000000000000000000000000000000000000..7a48088fd8fd63764049b875bdbe955d72043e4f
 --- /dev/null
 +++ b/contrib/apple-dma/scripts/build-guest-driver-bundle.sh
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,476 @@
 +#!/usr/bin/env bash
 +# Modified by OpenResearchTools, 2026-05-26.
 +# SPDX-License-Identifier: GPL-2.0-or-later
