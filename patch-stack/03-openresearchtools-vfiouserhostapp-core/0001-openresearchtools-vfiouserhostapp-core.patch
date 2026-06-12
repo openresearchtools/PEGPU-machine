@@ -77,8 +77,14 @@ index 0000000000000000000000000000000000000000..7a48088fd8fd63764049b875bdbe955d
 +SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1767225600}"
 +export SOURCE_DATE_EPOCH
 +
-+DRIVER_VERSION="$(awk -F'"' '/PACKAGE_VERSION/{print $2; exit}' "$DRIVER_SRC/dkms.conf")"
-+PKG_VERSION="${DRIVER_VERSION}-1"
++DRIVER_VERSION="${PEGPU_DRIVER_VERSION:-$(awk -F'"' '/PACKAGE_VERSION/{print $2; exit}' "$DRIVER_SRC/dkms.conf")}"
++case "$DRIVER_VERSION" in
++  *[!0-9.]*|"")
++    echo "error: invalid PEGPU driver version: $DRIVER_VERSION" >&2
++    exit 1
++    ;;
++esac
++PKG_VERSION="$DRIVER_VERSION"
 +
 +for tool in dpkg-deb jq sha512sum tar; do
 +  if ! command -v "$tool" >/dev/null 2>&1; then
@@ -104,6 +110,7 @@ index 0000000000000000000000000000000000000000..7a48088fd8fd63764049b875bdbe955d
 +    --exclude='Module.symvers' \
 +    --exclude='modules.order' \
 +    -cf - . | tar -C "$dest" -xf -
++  sed -i "s/^PACKAGE_VERSION=.*/PACKAGE_VERSION=\"$DRIVER_VERSION\"/" "$dest/dkms.conf"
 +  sed -i 's/window_shift=18/window_shift=17/' "$dest/apple-dma-options.conf"
 +}
 +
@@ -962,8 +969,7 @@ index 0000000000000000000000000000000000000000..0c49c88f54c8862a7558f6fa6b54cc96
 +    private var appVersionLine: String {
 +        let info = Bundle.main.infoDictionary ?? [:]
 +        let version = info["CFBundleShortVersionString"] as? String ?? "1.0"
-+        let build = info["CFBundleVersion"] as? String ?? ""
-+        return build.isEmpty ? "Version \(version)" : "Version \(version) (\(build))"
++        return "Version \(version)"
 +    }
 +}
 +

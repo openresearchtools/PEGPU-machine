@@ -7,11 +7,11 @@ on:
   workflow_call:
     inputs:
       release_version:
-        description: "App version to write into CFBundleShortVersionString, for example 1.0.0"
+        description: "Semantic version to write into the app, DKMS package, and manifests, for example 0.1.101"
         required: false
         type: string
       build_number:
-        description: "Build number to write into CFBundleVersion. Defaults to the GitHub run number."
+        description: "Deprecated; CFBundleVersion defaults to the semantic version."
         required: false
         type: string
       publish_release:
@@ -27,11 +27,11 @@ on:
   workflow_dispatch:
     inputs:
       release_version:
-        description: "App version to write into CFBundleShortVersionString, for example 1.0.0"
+        description: "Semantic version to write into the app, DKMS package, and manifests, for example 0.1.101"
         required: false
         type: string
       build_number:
-        description: "Build number to write into CFBundleVersion. Defaults to the GitHub run number."
+        description: "Deprecated; CFBundleVersion defaults to the semantic version."
         required: false
         type: string
       publish_release:
@@ -71,6 +71,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: openresearchtools/PEGPU-machine
+          ref: ${{ github.ref }}
           path: patch-control
 
       - name: Checkout clean QEMU base
@@ -122,6 +123,8 @@ jobs:
 
       - name: Build guest driver DKMS package and manifest
         run: contrib/apple-dma/scripts/build-guest-driver-bundle.sh
+        env:
+          PEGPU_DRIVER_VERSION: ${{ inputs.release_version || '' }}
 
       - name: Validate guest tools
         run: |
@@ -134,6 +137,10 @@ jobs:
           jq -e '.driver | has("prebuiltPackages") | not' artifacts/guest-tools/manifest.json
           DKMS_DEB="$(find artifacts/guest-tools/packages -type f -name 'apple-dma-dkms_*.deb' -print -quit)"
           test -n "$DKMS_DEB"
+          if [ -n "${{ inputs.release_version || '' }}" ]; then
+            test "$(dpkg-deb -f "$DKMS_DEB" Version)" = "${{ inputs.release_version }}"
+            dpkg-deb -c "$DKMS_DEB" | grep -q "./usr/src/apple-dma-${{ inputs.release_version }}/dkms.conf"
+          fi
           dpkg-deb -c "$DKMS_DEB" | grep -q './usr/sbin/apple-dma-config'
           dpkg-deb -c "$DKMS_DEB" | grep -q './usr/share/apple-dma/apple-dma-options.conf'
           if find artifacts/guest-tools/packages -type f -name 'apple-dma-modules-*.deb' -print -quit | grep -q .; then
@@ -559,7 +566,7 @@ jobs:
         id: version
         run: |
           VERSION="${{ inputs.release_version }}"
-          BUILD_NUMBER="${{ inputs.build_number }}"
+          BUILD_NUMBER=""
           PUBLISH_RELEASE="${{ inputs.publish_release }}"
           if [[ "$PUBLISH_RELEASE" == "true" && -z "$VERSION" ]]; then
             echo "release_version is required when publish_release is enabled" >&2
@@ -568,9 +575,7 @@ jobs:
           if [[ -z "$VERSION" ]]; then
             VERSION="$(awk -F ' = |;' '/MARKETING_VERSION =/ { print $2; exit }' contrib/apple-vfio/VFIOUserHostApp.xcodeproj/project.pbxproj)"
           fi
-          if [[ -z "$BUILD_NUMBER" ]]; then
-            BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
-          fi
+          BUILD_NUMBER="$VERSION"
           case "$VERSION" in
             *[!0-9A-Za-z._-]*|"")
               echo "invalid release version: $VERSION" >&2
@@ -587,7 +592,7 @@ jobs:
             echo "marketing_version=$VERSION"
             echo "build_number=$BUILD_NUMBER"
           } >> "$GITHUB_OUTPUT"
-          printf 'App version: %s (%s)\n' "$VERSION" "$BUILD_NUMBER"
+          printf 'App version: %s\n' "$VERSION"
 
       - name: Show Xcode
         run: |
@@ -998,7 +1003,7 @@ jobs:
 
           Build metadata:
 
-          - App version: ${{ steps.version.outputs.marketing_version }} (${{ steps.version.outputs.build_number }})
+          - App version: ${{ steps.version.outputs.marketing_version }}
           - Artifact base: ${{ steps.artifacts.outputs.release_base }}
           - Source base: ${{ steps.artifacts.outputs.source_base }}
           - Repository: ${GITHUB_REPOSITORY}
