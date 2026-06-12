@@ -137,14 +137,23 @@ jobs:
           jq -e '.driver | has("prebuiltPackages") | not' artifacts/guest-tools/manifest.json
           DKMS_DEB="$(find artifacts/guest-tools/packages -type f -name 'apple-dma-dkms_*.deb' -print -quit)"
           test -n "$DKMS_DEB"
-          DKMS_LISTING="${RUNNER_TEMP:-/tmp}/apple-dma-dkms.contents"
-          dpkg-deb -c "$DKMS_DEB" > "$DKMS_LISTING"
+          DKMS_ROOT="${RUNNER_TEMP:-/tmp}/apple-dma-dkms-root"
+          rm -rf "$DKMS_ROOT"
+          mkdir -p "$DKMS_ROOT"
+          dpkg-deb -x "$DKMS_DEB" "$DKMS_ROOT"
+          require_dkms_file() {
+            if [ ! -e "$1" ]; then
+              echo "missing expected DKMS package file: $1" >&2
+              find "$DKMS_ROOT" -maxdepth 6 -type f | sort >&2
+              exit 1
+            fi
+          }
           if [ -n "${{ inputs.release_version || '' }}" ]; then
             test "$(dpkg-deb -f "$DKMS_DEB" Version)" = "${{ inputs.release_version }}"
-            grep -F -q "./usr/src/apple-dma-${{ inputs.release_version }}/dkms.conf" "$DKMS_LISTING"
+            require_dkms_file "$DKMS_ROOT/usr/src/apple-dma-${{ inputs.release_version }}/dkms.conf"
           fi
-          grep -F -q './usr/sbin/apple-dma-config' "$DKMS_LISTING"
-          grep -F -q './usr/share/apple-dma/apple-dma-options.conf' "$DKMS_LISTING"
+          require_dkms_file "$DKMS_ROOT/usr/sbin/apple-dma-config"
+          require_dkms_file "$DKMS_ROOT/usr/share/apple-dma/apple-dma-options.conf"
           if find artifacts/guest-tools/packages -type f -name 'apple-dma-modules-*.deb' -print -quit | grep -q .; then
             echo "guest tools must not contain kernel-versioned DMA module packages" >&2
             exit 1
