@@ -154,11 +154,17 @@ jobs:
           fi
           require_dkms_file "$DKMS_ROOT/usr/sbin/apple-dma-config"
           require_dkms_file "$DKMS_ROOT/usr/share/apple-dma/apple-dma-options.conf"
-          if find artifacts/guest-tools/packages -type f -name 'apple-dma-modules-*.deb' -print -quit | grep -q .; then
+          MODULE_DEB="$(find artifacts/guest-tools/packages -type f -name 'apple-dma-modules-*.deb' -print -quit)"
+          if [ -n "$MODULE_DEB" ]; then
             echo "guest tools must not contain kernel-versioned DMA module packages" >&2
             exit 1
           fi
-          find artifacts/guest-tools/source -type f -name 'apple-dma-*.tar.gz' -print -quit | grep -q .
+          SOURCE_TAR="$(find artifacts/guest-tools/source -type f -name 'apple-dma-*.tar.gz' -print -quit)"
+          if [ -z "$SOURCE_TAR" ]; then
+            echo "missing expected apple-dma source tarball" >&2
+            find artifacts/guest-tools -maxdepth 3 -type f | sort >&2
+            exit 1
+          fi
           sha512sum -c artifacts/guest-tools/SHA512SUMS
 
       - name: Upload guest tools
@@ -390,8 +396,8 @@ jobs:
           test -x dist/qemu-system-aarch64
           test -x dist/qemu-img
           test -f dist/lib/libspice-server.1.dylib
-          find dist/lib -maxdepth 1 -type f -name 'libssl*.dylib' -print -quit | grep -q .
-          find dist/lib -maxdepth 1 -type f -name 'libcrypto*.dylib' -print -quit | grep -q .
+          test -n "$(find dist/lib -maxdepth 1 -type f -name 'libssl*.dylib' -print -quit)"
+          test -n "$(find dist/lib -maxdepth 1 -type f -name 'libcrypto*.dylib' -print -quit)"
           otool -L dist/lib/libspice-server.1.dylib | tee "$RUNNER_TEMP/spice-server-links.txt"
           grep -E '@loader_path/libssl.*\.dylib' "$RUNNER_TEMP/spice-server-links.txt"
           grep -E '@loader_path/libcrypto.*\.dylib' "$RUNNER_TEMP/spice-server-links.txt"
@@ -711,11 +717,12 @@ jobs:
           if missing:
               raise SystemExit("Debian package missing required files: " + ", ".join(missing))
           PY
-          if find "$APP/Contents/Resources/guest-tools/packages" -type f -name 'apple-dma-modules-*.deb' -print -quit | grep -q .; then
+          APP_MODULE_DEB="$(find "$APP/Contents/Resources/guest-tools/packages" -type f -name 'apple-dma-modules-*.deb' -print -quit)"
+          if [ -n "$APP_MODULE_DEB" ]; then
             echo "Machine app must not bundle kernel-versioned apple DMA module packages" >&2
             exit 1
           fi
-          find "$APP/Contents/Resources/guest-tools/source" -type f -name 'apple-dma-*.tar.gz' -print -quit | grep -q .
+          test -n "$(find "$APP/Contents/Resources/guest-tools/source" -type f -name 'apple-dma-*.tar.gz' -print -quit)"
           test -f "$APP/Contents/Resources/ThirdPartyNotices/NOTICES"
           test -f "$APP/Contents/Resources/ThirdPartyNotices/LICENSES"
           test "$(find "$APP/Contents/Resources/ThirdPartyNotices" -maxdepth 1 -type f | wc -l | tr -d ' ')" = "2"
@@ -737,8 +744,8 @@ jobs:
           test -f "$GENERATED_NOTICES/license-files/gstreamer/LICENSE"
           test -f "$GENERATED_NOTICES/license-files/virglrenderer/COPYING"
           test -f "$APP/Contents/MacOS/lib/libspice-server.1.dylib"
-          find "$APP/Contents/MacOS/lib" -maxdepth 1 -type f -name 'libssl*.dylib' -print -quit | grep -q .
-          find "$APP/Contents/MacOS/lib" -maxdepth 1 -type f -name 'libcrypto*.dylib' -print -quit | grep -q .
+          test -n "$(find "$APP/Contents/MacOS/lib" -maxdepth 1 -type f -name 'libssl*.dylib' -print -quit)"
+          test -n "$(find "$APP/Contents/MacOS/lib" -maxdepth 1 -type f -name 'libcrypto*.dylib' -print -quit)"
           test -f "$APP/Contents/MacOS/lib/libssl.60.dylib"
           test -f "$APP/Contents/MacOS/lib/libcrypto.57.dylib"
           test ! -e "$APP/Contents/MacOS/lib/libssl.3.dylib"
