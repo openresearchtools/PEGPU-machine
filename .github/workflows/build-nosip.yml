@@ -137,12 +137,14 @@ jobs:
           jq -e '.driver | has("prebuiltPackages") | not' artifacts/guest-tools/manifest.json
           DKMS_DEB="$(find artifacts/guest-tools/packages -type f -name 'apple-dma-dkms_*.deb' -print -quit)"
           test -n "$DKMS_DEB"
+          DKMS_LISTING="${RUNNER_TEMP:-/tmp}/apple-dma-dkms.contents"
+          dpkg-deb -c "$DKMS_DEB" > "$DKMS_LISTING"
           if [ -n "${{ inputs.release_version || '' }}" ]; then
             test "$(dpkg-deb -f "$DKMS_DEB" Version)" = "${{ inputs.release_version }}"
-            dpkg-deb -c "$DKMS_DEB" | grep -q "./usr/src/apple-dma-${{ inputs.release_version }}/dkms.conf"
+            grep -F -q "./usr/src/apple-dma-${{ inputs.release_version }}/dkms.conf" "$DKMS_LISTING"
           fi
-          dpkg-deb -c "$DKMS_DEB" | grep -q './usr/sbin/apple-dma-config'
-          dpkg-deb -c "$DKMS_DEB" | grep -q './usr/share/apple-dma/apple-dma-options.conf'
+          grep -F -q './usr/sbin/apple-dma-config' "$DKMS_LISTING"
+          grep -F -q './usr/share/apple-dma/apple-dma-options.conf' "$DKMS_LISTING"
           if find artifacts/guest-tools/packages -type f -name 'apple-dma-modules-*.deb' -print -quit | grep -q .; then
             echo "guest tools must not contain kernel-versioned DMA module packages" >&2
             exit 1
