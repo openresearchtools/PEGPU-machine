@@ -132,11 +132,14 @@ jobs:
           test -f artifacts/guest-tools/pegpu-guest-driver-bundle.tar.gz
           test -f artifacts/guest-tools/SHA512SUMS
           test ! -d artifacts/guest-tools/work
+          echo "Guest tools manifest:"
+          cat artifacts/guest-tools/manifest.json
           jq -e '.driver.dkmsPackages | length == 1' artifacts/guest-tools/manifest.json
           jq -e 'has("kernels") | not' artifacts/guest-tools/manifest.json
           jq -e '.driver | has("prebuiltPackages") | not' artifacts/guest-tools/manifest.json
           DKMS_DEB="$(find artifacts/guest-tools/packages -type f -name 'apple-dma-dkms_*.deb' -print -quit)"
           test -n "$DKMS_DEB"
+          echo "DKMS package: $DKMS_DEB"
           DKMS_ROOT="${RUNNER_TEMP:-/tmp}/apple-dma-dkms-root"
           rm -rf "$DKMS_ROOT"
           mkdir -p "$DKMS_ROOT"
@@ -149,7 +152,12 @@ jobs:
             fi
           }
           if [ -n "${{ inputs.release_version || '' }}" ]; then
-            test "$(dpkg-deb -f "$DKMS_DEB" Version)" = "${{ inputs.release_version }}"
+            DKMS_VERSION="$(dpkg-deb -f "$DKMS_DEB" Version)"
+            echo "DKMS package version: $DKMS_VERSION"
+            if [ "$DKMS_VERSION" != "${{ inputs.release_version }}" ]; then
+              echo "expected DKMS package version ${{ inputs.release_version }}, got $DKMS_VERSION" >&2
+              exit 1
+            fi
             require_dkms_file "$DKMS_ROOT/usr/src/apple-dma-${{ inputs.release_version }}/dkms.conf"
           fi
           require_dkms_file "$DKMS_ROOT/usr/sbin/apple-dma-config"
@@ -165,6 +173,9 @@ jobs:
             find artifacts/guest-tools -maxdepth 3 -type f | sort >&2
             exit 1
           fi
+          echo "Source tarball: $SOURCE_TAR"
+          echo "SHA512SUMS:"
+          cat artifacts/guest-tools/SHA512SUMS
           sha512sum -c artifacts/guest-tools/SHA512SUMS
 
       - name: Upload guest tools
