@@ -71,7 +71,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: openresearchtools/PEGPU-machine
-          ref: ${{ github.ref }}
+          ref: main
           path: patch-control
 
       - name: Checkout clean QEMU base
@@ -170,6 +170,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: openresearchtools/PEGPU-machine
+          ref: main
           path: patch-control
 
       - name: Checkout clean QEMU base
@@ -446,6 +447,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: openresearchtools/PEGPU-machine
+          ref: main
           path: patch-control
 
       - name: Checkout clean QEMU base

@@ -969,6 +969,7 @@ index 0000000000000000000000000000000000000000..0c49c88f54c8862a7558f6fa6b54cc96
 +    private var appVersionLine: String {
 +        let info = Bundle.main.infoDictionary ?? [:]
 +        let version = info["CFBundleShortVersionString"] as? String ?? "1.0"
++        _ = info["CFBundleVersion"] as? String ?? ""
 +        return "Version \(version)"
 +    }
 +}
