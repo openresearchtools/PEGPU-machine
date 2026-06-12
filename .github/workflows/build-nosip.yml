@@ -660,8 +660,39 @@ jobs:
           test ! -d "$APP/Contents/Resources/guest-tools/work"
           DKMS_DEB="$(find "$APP/Contents/Resources/guest-tools/packages" -type f -name 'apple-dma-dkms_*.deb' -print -quit)"
           test -n "$DKMS_DEB"
-          dpkg-deb -c "$DKMS_DEB" | grep -q './usr/sbin/apple-dma-config'
-          dpkg-deb -c "$DKMS_DEB" | grep -q './usr/share/apple-dma/apple-dma-options.conf'
+          python3 - "$DKMS_DEB" <<'PY'
+          import io
+          import sys
+          import tarfile
+          from pathlib import Path
+
+          required = {
+              "./usr/sbin/apple-dma-config",
+              "./usr/share/apple-dma/apple-dma-options.conf",
+          }
+          data = Path(sys.argv[1]).read_bytes()
+          if not data.startswith(b"!<arch>\n"):
+              raise SystemExit("not a Debian ar archive")
+          offset = 8
+          payload = None
+          while offset + 60 <= len(data):
+              header = data[offset:offset + 60]
+              offset += 60
+              name = header[:16].decode("utf-8").strip().rstrip("/")
+              size = int(header[48:58].decode("ascii").strip())
+              body = data[offset:offset + size]
+              offset += size + (size % 2)
+              if name.startswith("data.tar"):
+                  payload = body
+                  break
+          if payload is None:
+              raise SystemExit("Debian package has no data.tar member")
+          with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
+              names = {"./" + member.name.lstrip("./") for member in archive.getmembers()}
+          missing = sorted(required - names)
+          if missing:
+              raise SystemExit("Debian package missing required files: " + ", ".join(missing))
+          PY
           if find "$APP/Contents/Resources/guest-tools/packages" -type f -name 'apple-dma-modules-*.deb' -print -quit | grep -q .; then
             echo "Machine app must not bundle kernel-versioned apple DMA module packages" >&2
             exit 1
